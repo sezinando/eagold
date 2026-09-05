@@ -4,7 +4,7 @@
 //+------------------------------------------------------------------+
 #property strict
 #property indicator_chart_window
-#property version   "001.000"
+#property version   "1.001"
 #property description "Records every indicator tick with sequence, server time, Bid, Ask and spread for later order-history correlation."
 
 input string LogFileName       = "EAGOLD_TICKS_XAUUSD.csv";
@@ -12,11 +12,11 @@ input bool   ClearFileOnInit   = true;
 input bool   FlushEveryTick    = true;
 input bool   ShowStatusOnChart = true;
 
-int      g_fileHandle   = INVALID_HANDLE;
-ulong    g_tickIndex    = 0;
-uint     g_startTickMs  = 0;
-datetime g_startServer  = 0;
-bool     g_ready        = false;
+int      g_fileHandle  = INVALID_HANDLE;
+ulong    g_tickIndex   = 0;
+uint     g_startTickMs = 0;
+datetime g_startServer = 0;
+bool     g_ready       = false;
 
 string ShortFileName()
 {
@@ -90,7 +90,7 @@ void WriteStatus()
    }
    else
    {
-      status="EAGOLD TICK LOGGER v1.000\n"+
+      status="EAGOLD TICK LOGGER v1.001\n"+
              "File: "+ShortFileName()+"\n"+
              "Ticks: "+IntegerToString((int)g_tickIndex)+"\n"+
              "Common\\Files\n"+
@@ -115,10 +115,9 @@ bool WriteTick()
    uint elapsed=nowMs-g_startTickMs;
 
    // MT4 exposes the market tick time with second resolution in MqlTick.
-   // GetTickCount supplies a local monotonic millisecond sequence reference.
-   // The exact tick ordering is therefore preserved by TickIndex even when
-   // the broker/tester timestamp itself has no millisecond component.
-   long serverMscApprox=(long)g_startServer*1000L+(long)elapsed;
+   // GetTickCount supplies a local monotonic millisecond reference. TickIndex
+   // preserves exact arrival order even when broker/tester time has seconds only.
+   double serverMscApprox=(double)g_startServer*1000.0+(double)elapsed;
 
    double spreadPoints=0.0;
    if(Point>0.0)
@@ -127,17 +126,17 @@ bool WriteTick()
    g_tickIndex++;
 
    FileWrite(g_fileHandle,
-             (string)g_tickIndex,
+             IntegerToString((int)g_tickIndex),
              TickDateTime(tick.time),
-             LongToString(serverMscApprox),
-             (string)elapsed,
+             DoubleToString(serverMscApprox,0),
+             IntegerToString((int)elapsed),
              DoubleToString(tick.bid,Digits),
              DoubleToString(tick.ask,Digits),
              DoubleToString(spreadPoints,1),
              DoubleToString(tick.ask-tick.bid,Digits),
              DoubleToString(tick.last,Digits),
-             LongToString((long)tick.volume),
-             LongToString((long)tick.flags),
+             DoubleToString((double)tick.volume,0),
+             IntegerToString((int)tick.flags),
              Symbol(),
              IntegerToString(Digits),
              DoubleToString(Point,Digits));
@@ -150,7 +149,7 @@ bool WriteTick()
 
 int OnInit()
 {
-   IndicatorShortName("EAGOLD Tick Logger v1.000");
+   IndicatorShortName("EAGOLD Tick Logger v1.001");
 
    g_tickIndex=0;
    g_startTickMs=GetTickCount();
