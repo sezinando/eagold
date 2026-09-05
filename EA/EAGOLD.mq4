@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.912"
+#property version   "0.913"
 #property description "EAGOLD - observed BUY/SELL distance engine"
 
 input int    MagicNumber       = 1001;
@@ -313,9 +313,21 @@ void TrailSellStops()
       if(!IsEAGOLDOrder() || OrderType()!=OP_SELLSTOP) continue;
 
       RefreshRates();
-      double distance=(CountOpenSide(OP_BUY)>0 || CountOpenSide(OP_SELL)>0)
-                      ? PointsToPrice(SmartGrid1) : PointsToPrice(PendingStepTrail);
-      double desired=NormalizePrice(Bid-distance);
+
+      // Observed ZEUS behavior at startup:
+      // initial SELL STOP = Bid - FirstStep;
+      // immediate repositioning = Ask - FirstStep.
+      // The difference is exactly the spread. In the observed tick:
+      // 4659.71 -> 4660.26 = +0.55 = 55 points.
+      double desired;
+      if(CountOpenSide(OP_BUY)==0 && CountOpenSide(OP_SELL)==0)
+         desired=NormalizePrice(Ask-PointsToPrice(FirstStep));
+      else
+      {
+         double distance=PointsToPrice(SmartGrid1);
+         desired=NormalizePrice(Bid-distance);
+      }
+
       double current=OrderOpenPrice();
       double trail=PointsToPrice(PendingStepTrail);
       double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
@@ -391,7 +403,7 @@ void ProcessCloseBy()
 
 void UpdateDisplay()
 {
-   string text=EA_NAME+" v0.912";
+   string text=EA_NAME+" v0.913";
    text += "\nBUY="+IntegerToString(CountOpenSide(OP_BUY));
    text += " SELL="+IntegerToString(CountOpenSide(OP_SELL));
    text += "\nMiniGrid1="+DoubleToString(MiniGrid1,Digits);
@@ -404,7 +416,7 @@ void UpdateDisplay()
 int OnInit()
 {
    SyncBuyExecutionState();
-   Print(EA_NAME," v0.912 initialized. Test configuration: FirstStep=160 MiniGrid1=250 SmartGrid1=80 MiniGrid2=80 SmartGrid2=60 PendingStepTrail=50.");
+   Print(EA_NAME," v0.913 initialized. Test configuration: FirstStep=160 MiniGrid1=250 SmartGrid1=80 MiniGrid2=80 SmartGrid2=60 PendingStepTrail=50.");
    return(INIT_SUCCEEDED);
 }
 
