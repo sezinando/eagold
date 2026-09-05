@@ -3,8 +3,8 @@
 //|                         EAGOLD - Expert Advisor for MT4          |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "000.600"
-#property description "EAGOLD - Trailing opposite orders, SELL mini-grid and basket management."
+#property version   "000.601"
+#property description "EAGOLD - Trailing, SELL mini-grid, basket and weighted average price display."
 
 input int    MagicNumber       = 1001;
 input double Lots              = 0.01;
@@ -15,6 +15,15 @@ input double K_lot             = 1.10;
 input double ProfitTargetPrice = 1.0;
 input double BasketTotal       = 5.0;
 input int    Slippage          = 10;
+
+// Cores utilizadas pelo indicador visual de preço médio.
+color AvgBuyColor  = clrBlue;
+color AvgSellColor = clrRed;
+
+string AvgBuyLineName  = "EAGOLD_AVG_BUY_LINE";
+string AvgSellLineName = "EAGOLD_AVG_SELL_LINE";
+string AvgBuyTextName  = "EAGOLD_AVG_BUY_TEXT";
+string AvgSellTextName = "EAGOLD_AVG_SELL_TEXT";
 
 //====================================================================
 // FILTROS DE ORDENS
@@ -110,10 +119,151 @@ double PositionProfitPrice()
 }
 
 //====================================================================
+// PREÇO MÉDIO POR LADO
+//====================================================================
+//
+// Calcula o preço médio ponderado pelo lote das posições abertas
+// EAGOLD do mesmo lado.
+//
+// BUY AVG  = SUM(PreçoAbertura x Lote) / SUM(Lote)
+// SELL AVG = SUM(PreçoAbertura x Lote) / SUM(Lote)
+//
+// Ordens pendentes não participam do cálculo, pois ainda não possuem
+// posição executada.
+//====================================================================
+
+bool GetSideAverage(int side, double &averagePrice, double &totalLots)
+{
+   double weightedPrice = 0.0;
+   totalLots = 0.0;
+
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder()) continue;
+      if(OrderType() != side) continue;
+
+      double lots = OrderLots();
+      weightedPrice += OrderOpenPrice() * lots;
+      totalLots += lots;
+   }
+
+   if(totalLots <= 0.0)
+   {
+      averagePrice = 0.0;
+      return(false);
+   }
+
+   averagePrice = NormalizeDouble(weightedPrice / totalLots, Digits);
+   return(true);
+}
+
+void DeleteAverageObject(string objectName)
+{
+   if(ObjectFind(0, objectName) >= 0)
+      ObjectDelete(0, objectName);
+}
+
+void DrawAverageLine(string lineName,
+                     string textName,
+                     double averagePrice,
+                     color lineColor,
+                     string sideText)
+{
+   if(ObjectFind(0, lineName) < 0)
+   {
+      if(!ObjectCreate(0, lineName, OBJ_HLINE, 0, 0, averagePrice))
+      {
+         Print("EAGOLD ERROR - Could not create average line. Name=", lineName,
+               " Error=", GetLastError());
+         return;
+      }
+   }
+
+   ObjectSetDouble(0, lineName, OBJPROP_PRICE1, averagePrice);
+   ObjectSetInteger(0, lineName, OBJPROP_COLOR, lineColor);
+   ObjectSetInteger(0, lineName, OBJPROP_STYLE, STYLE_DASH);
+   ObjectSetInteger(0, lineName, OBJPROP_WIDTH, 1);
+   ObjectSetInteger(0, lineName, OBJPROP_BACK, false);
+   ObjectSetInteger(0, lineName, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, lineName, OBJPROP_SELECTED, false);
+   ObjectSetString(0, lineName, OBJPROP_TOOLTIP,
+                   sideText + " AVG " + DoubleToString(averagePrice, Digits));
+
+   // Texto acompanha o preço médio próximo à última barra.
+   datetime textTime = TimeCurrent();
+   if(Bars > 0)
+      textTime = Time[0];
+
+   if(ObjectFind(0, textName) < 0)
+   {
+      if(!ObjectCreate(0, textName, OBJ_TEXT, 0, textTime, averagePrice))
+      {
+         Print("EAGOLD ERROR - Could not create average text. Name=", textName,
+               " Error=", GetLastError());
+         return;
+      }
+   }
+
+   ObjectMove(0, textName, 0, textTime, averagePrice);
+   ObjectSetString(0, textName, OBJPROP_TEXT,
+                   sideText + " " + DoubleToString(averagePrice, Digits));
+   ObjectSetString(0, textName, OBJPROP_FONT, "Arial");
+   ObjectSetInteger(0, textName, OBJPROP_FONTSIZE, 8);
+   ObjectSetInteger(0, textName, OBJPROP_COLOR, lineColor);
+   ObjectSetInteger(0, textName, OBJPROP_ANCHOR, ANCHOR_LEFT);
+   ObjectSetInteger(0, textName, OBJPROP_BACK, false);
+   ObjectSetInteger(0, textName, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, textName, OBJPROP_SELECTED, false);
+}
+
+void UpdateAveragePriceDisplay()
+{
+   double buyAverage;
+   double buyLots;
+   double sellAverage;
+   double sellLots;
+
+   bool hasBuy  = GetSideAverage(OP_BUY, buyAverage, buyLots);
+   bool hasSell = GetSideAverage(OP_SELL, sellAverage, sellLots);
+
+   if(hasBuy)
+   {
+      DrawAverageLine(AvgBuyLineName, AvgBuyTextName,
+                      buyAverage, AvgBuyColor, "BUY AVG");
+   }
+   else
+   {
+      DeleteAverageObject(AvgBuyLineName);
+      DeleteAverageObject(AvgBuyTextName);
+   }
+
+   if(hasSell)
+   {
+      DrawAverageLine(AvgSellLineName, AvgSellTextName,
+                      sellAverage, AvgSellColor, "SELL AVG");
+   }
+   else
+   {
+      DeleteAverageObject(AvgSellLineName);
+      DeleteAverageObject(AvgSellTextName);
+   }
+
+   ChartRedraw();
+}
+
+void DeleteAveragePriceDisplay()
+{
+   DeleteAverageObject(AvgBuyLineName);
+   DeleteAverageObject(AvgSellLineName);
+   DeleteAverageObject(AvgBuyTextName);
+   DeleteAverageObject(AvgSellTextName);
+}
+
+//====================================================================
 // BASKET
 //====================================================================
 
-// Soma apenas posições abertas. Pendentes não possuem P/L realizado.
 double BasketProfit()
 {
    double total = 0.0;
@@ -134,7 +284,6 @@ void CloseBasket()
 {
    RefreshRates();
 
-   // Primeiro fecha posições abertas.
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
@@ -142,7 +291,7 @@ void CloseBasket()
       if(!IsOpenPosition()) continue;
 
       int ticket = OrderTicket();
-      int type   = OrderType();
+      int type = OrderType();
       double lots = OrderLots();
       double price = (type == OP_BUY) ? Bid : Ask;
 
@@ -155,7 +304,6 @@ void CloseBasket()
       }
    }
 
-   // Depois elimina todas as pendentes restantes.
    for(int j = OrdersTotal() - 1; j >= 0; j--)
    {
       if(!OrderSelect(j, SELECT_BY_POS, MODE_TRADES)) continue;
@@ -171,6 +319,8 @@ void CloseBasket()
                pendingTicket, " Error=", GetLastError());
       }
    }
+
+   UpdateAveragePriceDisplay();
 
    Print("EAGOLD - BASKET CLOSED. BasketProfit reached ",
          DoubleToString(BasketTotal, 2));
@@ -196,11 +346,6 @@ bool CheckBasket()
 
 //====================================================================
 // OPERAÇÃO INDEPENDENTE
-//====================================================================
-//
-// Uma nova BUY só nasce depois que a BUY anterior for efetivamente
-// fechada pelo ProfitTarget. A nova BUY é aberta a mercado; FirstStep
-// define a distância da nova SELL STOP associada à operação.
 //====================================================================
 
 bool StartIndependentOperation(int direction, double operationLots)
@@ -266,6 +411,7 @@ bool StartIndependentOperation(int direction, double operationLots)
    {
       Print("EAGOLD WARNING - SELL STOP could not be created because it is too close. MarketTicket=",
             marketTicket);
+      UpdateAveragePriceDisplay();
       return(true);
    }
 
@@ -273,6 +419,7 @@ bool StartIndependentOperation(int direction, double operationLots)
    {
       Print("EAGOLD WARNING - BUY STOP could not be created because it is too close. MarketTicket=",
             marketTicket);
+      UpdateAveragePriceDisplay();
       return(true);
    }
 
@@ -291,6 +438,7 @@ bool StartIndependentOperation(int direction, double operationLots)
             marketTicket,
             " Price=", DoubleToString(pendingPrice, Digits),
             " Error=", GetLastError());
+      UpdateAveragePriceDisplay();
       return(true);
    }
 
@@ -303,15 +451,12 @@ bool StartIndependentOperation(int direction, double operationLots)
          " PendingPrice=", DoubleToString(pendingPrice, Digits),
          " FirstStep=", FirstStep);
 
+   UpdateAveragePriceDisplay();
    return(true);
 }
 
 //====================================================================
 // TRAILING DAS SELL STOPS
-//====================================================================
-//
-// Enquanto houver BUY aberta, as SELL STOP acompanham o preço para cima
-// mantendo TrailingStep. A pendente nunca é recuada.
 //====================================================================
 
 void TrailSellStops()
@@ -334,7 +479,6 @@ void TrailSellStops()
       if(desiredPrice > Bid - minimumDistance)
          desiredPrice = NormalizeDouble(Bid - minimumDistance, Digits);
 
-      // A SELL STOP só acompanha para cima.
       if(desiredPrice <= OrderOpenPrice() + Point / 2.0)
          continue;
 
@@ -362,12 +506,6 @@ void TrailSellStops()
 
 //====================================================================
 // MINI GRID SELL
-//====================================================================
-//
-// Depois que uma SELL estiver aberta e o preço continuar subindo,
-// adiciona uma nova SELL a cada MiniGrid1 pontos a partir da maior
-// referência de preço das SELL abertas. O lote da nova ordem é o lote
-// anterior multiplicado por K_lot.
 //====================================================================
 
 bool GetHighestSell(double &highestPrice, double &highestLot)
@@ -438,6 +576,8 @@ void ManageSellMiniGrid()
          " Lots=", DoubleToString(nextLot, 2),
          " MiniGrid1=", MiniGrid1,
          " K_lot=", DoubleToString(K_lot, 2));
+
+   UpdateAveragePriceDisplay();
 }
 
 //====================================================================
@@ -480,12 +620,13 @@ void ManageIndividualTargets()
             " ProfitPrice=", DoubleToString(profitPrice, 2),
             " Target=", DoubleToString(ProfitTargetPrice, 2));
 
-      // A sucessora só é criada depois do fechamento confirmado.
-      // Para BUY, a nova BUY nasce a mercado e FirstStep define sua
-      // nova SELL STOP associada.
       if(direction == OP_BUY)
       {
          StartIndependentOperation(OP_BUY, Lots);
+      }
+      else
+      {
+         UpdateAveragePriceDisplay();
       }
    }
 }
@@ -496,9 +637,11 @@ void ManageIndividualTargets()
 
 int OnInit()
 {
+   DeleteAveragePriceDisplay();
+
    Print("==================================================");
-   Print("EAGOLD v0.6.0 INITIALIZED");
-   Print("Trailing + SELL MiniGrid + K_lot + Basket");
+   Print("EAGOLD v0.6.1 INITIALIZED");
+   Print("Trailing + SELL MiniGrid + K_lot + Basket + AVG PRICE");
    Print("FirstStep         = ", FirstStep, " points");
    Print("TrailingStep      = ", TrailingStep, " points");
    Print("MiniGrid1         = ", MiniGrid1, " points");
@@ -509,12 +652,14 @@ int OnInit()
    Print("Lots              = ", DoubleToString(Lots, 2));
    Print("==================================================");
 
+   UpdateAveragePriceDisplay();
    return(INIT_SUCCEEDED);
 }
 
 void OnDeinit(const int reason)
 {
-   Print("EAGOLD v0.6.0 DEINITIALIZED. Reason=", reason);
+   DeleteAveragePriceDisplay();
+   Print("EAGOLD v0.6.1 DEINITIALIZED. Reason=", reason);
 }
 
 //====================================================================
@@ -523,22 +668,15 @@ void OnDeinit(const int reason)
 
 void OnTick()
 {
-   RefreshRates();
-
-   // Basket tem prioridade sobre qualquer nova entrada.
    if(CheckBasket())
       return;
 
-   // Acompanhamento da SELL STOP enquanto o preço sobe.
    TrailSellStops();
-
-   // Gerenciamento do grid SELL depois que uma SELL foi ativada.
    ManageSellMiniGrid();
-
-   // Take individual. A sucessora só é criada após fechamento.
    ManageIndividualTargets();
+   UpdateAveragePriceDisplay();
 
-   // Primeira operação: BUY a mercado + SELL STOP em FirstStep.
+   // Primeira operação: somente quando não existe nenhuma ordem EAGOLD.
    if(CountOpenOrders() == 0 && CountPendingOrders() == 0)
       StartIndependentOperation(OP_BUY, Lots);
 }
