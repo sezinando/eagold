@@ -3,14 +3,14 @@
 //|                         EAGOLD - Expert Advisor for MT4          |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "000.401"
-#property description "EAGOLD - Independent operations with successor after close."
+#property version   "000.500"
+#property description "EAGOLD - Independent operations with trailing opposite orders."
 
-input int    MagicNumber  = 1001;
-input double Lots         = 0.01;
-input int    FirstStep    = 150;
-input int    ProfitTarget = 150;
-input int    Slippage     = 10;
+input int    MagicNumber       = 1001;
+input double Lots              = 0.01;
+input int    FirstStep         = 150;
+input double ProfitTargetPrice = 1.0;
+input int    Slippage          = 10;
 
 //====================================================================
 // CONTADORES
@@ -55,27 +55,19 @@ double StepPrice()
    return(FirstStep * Point);
 }
 
-double OrderProfitPoints()
+double OrderProfitPrice()
 {
    if(OrderType() == OP_BUY)
-      return((Bid - OrderOpenPrice()) / Point);
+      return(Bid - OrderOpenPrice());
 
    if(OrderType() == OP_SELL)
-      return((OrderOpenPrice() - Ask) / Point);
+      return(OrderOpenPrice() - Ask);
 
    return(0);
 }
 
 //====================================================================
-// ABRE UMA OPERAÇÃO INDEPENDENTE
-//====================================================================
-//
-// A operação é formada por:
-//   1. uma posição a mercado;
-//   2. sua ordem oposta pendente a FirstStep.
-//
-// A pendente pertence a esta operação e não impede que outra operação
-// independente seja criada posteriormente após o fechamento da posição.
+// CRIA OPERAÇÃO INDEPENDENTE
 //====================================================================
 
 bool StartIndependentOperation(int direction)
@@ -102,9 +94,7 @@ bool StartIndependentOperation(int direction)
       pendingPrice = NormalizeDouble(marketPrice + StepPrice(), Digits);
    }
    else
-   {
       return(false);
-   }
 
    int marketTicket = OrderSend(
       Symbol(), marketType, Lots, marketPrice, Slippage,
@@ -121,11 +111,9 @@ bool StartIndependentOperation(int direction)
       return(false);
    }
 
-   // Usa o preço real de execução como referência do FirstStep.
    if(OrderSelect(marketTicket, SELECT_BY_TICKET))
    {
       marketPrice = OrderOpenPrice();
-
       if(direction == OP_BUY)
          pendingPrice = NormalizeDouble(marketPrice - StepPrice(), Digits);
       else
@@ -136,23 +124,16 @@ bool StartIndependentOperation(int direction)
 
    double minimumDistance = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
 
-   if(direction == OP_BUY)
+   if(direction == OP_BUY && (Bid - pendingPrice) < minimumDistance)
    {
-      if((Bid - pendingPrice) < minimumDistance)
-      {
-         Print("EAGOLD ERROR - SELL STOP too close to market. Ticket=",
-               marketTicket, " StopLevel condition.");
-         return(true);
-      }
+      Print("EAGOLD ERROR - SELL STOP too close to market. Ticket=", marketTicket);
+      return(true);
    }
-   else
+
+   if(direction == OP_SELL && (pendingPrice - Ask) < minimumDistance)
    {
-      if((pendingPrice - Ask) < minimumDistance)
-      {
-         Print("EAGOLD ERROR - BUY STOP too close to market. Ticket=",
-               marketTicket, " StopLevel condition.");
-         return(true);
-      }
+      Print("EAGOLD ERROR - BUY STOP too close to market. Ticket=", marketTicket);
+      return(true);
    }
 
    ResetLastError();
@@ -168,7 +149,6 @@ bool StartIndependentOperation(int direction)
    {
       Print("EAGOLD ERROR - Opposite pending order failed. MarketTicket=",
             marketTicket,
-            " Type=", pendingType,
             " Price=", DoubleToString(pendingPrice, Digits),
             " Error=", GetLastError());
       return(true);
@@ -186,33 +166,26 @@ bool StartIndependentOperation(int direction)
 }
 
 //====================================================================
-// GERENCIAMENTO DAS ORDENS
+// ACOMPANHA AS PENDENTES COM O PREÇO
 //====================================================================
 //
-// REGRA FUNDAMENTAL:
+// Cada posição aberta possui uma ordem oposta associada ao seu nível.
+// Enquanto a posição não fechar, a pendente acompanha o movimento
+// favorável do preço, preservando FirstStep em relação ao preço atual.
 //
-//   posição aberta NÃO gera nova posição enquanto permanecer aberta.
+// BUY  -> SELL STOP = Bid - FirstStep
+// SELL -> BUY STOP  = Ask + FirstStep
 //
-//   posição fechada por ProfitTarget -> gera UMA nova posição na
-//   mesma direção.
-//
-// A existência de uma ordem oposta pendente NÃO altera esta regra.
-// Portanto:
-//
-//   BUY aberta + SELL STOP pendente
-//       -> enquanto BUY não fechar: NÃO abre outra BUY.
-//
-//   BUY fecha no gain
-//       -> abre NOVA BUY.
-//       -> SELL STOP anterior permanece.
-//       -> nova BUY recebe sua própria SELL STOP.
-//
-// As operações são independentes.
+// A pendente somente é movida para acompanhar o preço. Ela nunca é
+// aproximada do mercado além de FirstStep.
 //====================================================================
 
-void ManageOrders()
+void TrailPendingOrders()
 {
    RefreshRates();
+
+   double step = StepPrice();
+   double minimumDistance = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
 
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
@@ -222,10 +195,114 @@ void ManageOrders()
       if(OrderType() != OP_BUY && OrderType() != OP_SELL) continue;
 
       int direction = OrderType();
-      double profitPoints = OrderProfitPoints();
+      int positionTicket = OrderTicket();
+      double desiredPrice;
 
-      // Enquanto a posição não atingir o gain, NÃO cria outra posição.
-      if(profitPoints < ProfitTarget)
+      if(direction == OP_BUY)
+         desiredPrice = NormalizeDouble(Bid - step, Digits);
+      else
+         desiredPrice = NormalizeDouble(Ask + step, Digits);
+
+      // Procura a pendente correspondente à direção/momento.
+      int pendingTicket = -1;
+      int pendingType = direction == OP_BUY ? OP_SELLSTOP : OP_BUYSTOP;
+
+      for(int j = OrdersTotal() - 1; j >= 0; j--)
+      {
+         if(!OrderSelect(j, SELECT_BY_POS, MODE_TRADES)) continue;
+         if(OrderSymbol() != Symbol()) continue;
+         if(OrderMagicNumber() != MagicNumber) continue;
+         if(OrderType() != pendingType) continue;
+
+         pendingTicket = OrderTicket();
+         break;
+      }
+
+      if(pendingTicket < 0)
+         continue;
+
+      if(direction == OP_BUY)
+      {
+         if(desiredPrice > Bid - minimumDistance)
+            desiredPrice = NormalizeDouble(Bid - minimumDistance, Digits);
+      }
+      else
+      {
+         if(desiredPrice < Ask + minimumDistance)
+            desiredPrice = NormalizeDouble(Ask + minimumDistance, Digits);
+      }
+
+      if(!OrderSelect(pendingTicket, SELECT_BY_TICKET))
+         continue;
+
+      double currentPrice = OrderOpenPrice();
+
+      // Só modifica se a pendente realmente precisa subir.
+      // Para BUY, a SELL STOP acompanha somente para cima.
+      // Para SELL, a BUY STOP acompanha somente para baixo.
+      bool shouldModify = false;
+
+      if(direction == OP_BUY && desiredPrice > currentPrice + Point/2.0)
+         shouldModify = true;
+
+      if(direction == OP_SELL && desiredPrice < currentPrice - Point/2.0)
+         shouldModify = true;
+
+      if(!shouldModify)
+         continue;
+
+      ResetLastError();
+
+      bool modified = OrderModify(
+         pendingTicket,
+         desiredPrice,
+         0,
+         0,
+         0,
+         clrNONE
+      );
+
+      if(!modified)
+      {
+         Print("EAGOLD ERROR - Pending trail failed. PositionTicket=",
+               positionTicket,
+               " PendingTicket=", pendingTicket,
+               " Error=", GetLastError());
+      }
+      else
+      {
+         Print("EAGOLD - Pending order trailed. PositionTicket=",
+               positionTicket,
+               " PendingTicket=", pendingTicket,
+               " NewPrice=", DoubleToString(desiredPrice, Digits));
+      }
+   }
+}
+
+//====================================================================
+// GERENCIAMENTO
+//====================================================================
+
+void ManageOrders()
+{
+   RefreshRates();
+
+   // Primeiro acompanha as pendentes.
+   TrailPendingOrders();
+
+   // Depois verifica o Take individual de cada posição.
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(OrderSymbol() != Symbol()) continue;
+      if(OrderMagicNumber() != MagicNumber) continue;
+      if(OrderType() != OP_BUY && OrderType() != OP_SELL) continue;
+
+      int direction = OrderType();
+      double profitPrice = OrderProfitPrice();
+
+      // Take de 1.0 no PREÇO do ativo.
+      if(profitPrice < ProfitTargetPrice)
          continue;
 
       int ticket = OrderTicket();
@@ -247,10 +324,10 @@ void ManageOrders()
 
       Print("EAGOLD - Order closed by ProfitTarget. Ticket=", ticket,
             " Direction=", direction == OP_BUY ? "BUY" : "SELL",
-            " ProfitPoints=", DoubleToString(profitPoints, 1));
+            " ProfitPrice=", DoubleToString(profitPrice, 2),
+            " Target=", DoubleToString(ProfitTargetPrice, 2));
 
-      // SOMENTE AGORA nasce a sucessora desta operação.
-      // Nenhuma posição nova é criada antes deste fechamento.
+      // Somente depois do fechamento nasce a sucessora na mesma direção.
       StartIndependentOperation(direction);
    }
 }
@@ -262,12 +339,12 @@ void ManageOrders()
 int OnInit()
 {
    Print("==================================================");
-   Print("EAGOLD v0.4.1 INITIALIZED");
-   Print("Independent operations / successor only after close");
-   Print("FirstStep    = ", FirstStep, " points");
-   Print("ProfitTarget = ", ProfitTarget, " points");
-   Print("MagicNumber  = ", MagicNumber);
-   Print("Lots         = ", DoubleToString(Lots, 2));
+   Print("EAGOLD v0.5.0 INITIALIZED");
+   Print("Independent operations / trailing pending orders");
+   Print("FirstStep         = ", FirstStep, " points");
+   Print("ProfitTargetPrice = ", DoubleToString(ProfitTargetPrice, 2));
+   Print("MagicNumber       = ", MagicNumber);
+   Print("Lots              = ", DoubleToString(Lots, 2));
    Print("==================================================");
 
    return(INIT_SUCCEEDED);
@@ -275,7 +352,7 @@ int OnInit()
 
 void OnDeinit(const int reason)
 {
-   Print("EAGOLD v0.4.1 DEINITIALIZED. Reason=", reason);
+   Print("EAGOLD v0.5.0 DEINITIALIZED. Reason=", reason);
 }
 
 //====================================================================
@@ -286,9 +363,8 @@ void OnTick()
 {
    ManageOrders();
 
-   // Primeira operação somente se não existir nenhuma operação ou
-   // pendente do EAGOLD. A presença de uma pendente, por si só,
-   // nunca dispara uma nova posição.
+   // Primeira operação: somente quando não existe nenhuma ordem EAGOLD.
+   // Pendentes existentes nunca geram uma nova posição por conta própria.
    if(CountOpenOrders() == 0 && CountPendingOrders() == 0)
       StartIndependentOperation(OP_BUY);
 }
