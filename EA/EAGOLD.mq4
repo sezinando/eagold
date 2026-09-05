@@ -3,8 +3,8 @@
 //|                         EAGOLD - Expert Advisor for MT4          |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "000.300"
-#property description "EAGOLD - Two-order engine with FirstStep replacement."
+#property version   "000.301"
+#property description "EAGOLD - Two-order engine with robust FirstStep replacement."
 
 //====================================================================
 // INPUTS
@@ -69,15 +69,6 @@ int CountPendingOrders()
 
 //+------------------------------------------------------------------+
 
-int CountEAGOLDOrders()
-{
-   return(CountOpenOrders() + CountPendingOrders());
-}
-
-//====================================================================
-// CÁLCULOS
-//====================================================================
-
 double StepPrice()
 {
    return(FirstStep * Point);
@@ -106,10 +97,6 @@ void StartCycle()
 
    double buyPrice = NormalizeDouble(Ask, Digits);
 
-   //=================================================================
-   // BUY A MERCADO
-   //=================================================================
-
    int buyTicket = OrderSend(
       Symbol(), OP_BUY, Lots, buyPrice, Slippage,
       0, 0, "EAGOLD BUY", MagicNumber, 0, clrNONE
@@ -123,10 +110,6 @@ void StartCycle()
 
    Print("EAGOLD - BUY opened. Ticket=", buyTicket,
          " Price=", DoubleToString(buyPrice, Digits));
-
-   //=================================================================
-   // SELL STOP A FirstStep ABAIXO DA BUY
-   //=================================================================
 
    double sellPrice = NormalizeDouble(
       buyPrice - StepPrice(), Digits
@@ -179,14 +162,22 @@ void StartCycle()
 // REPOSIÇÃO DA ORDEM FECHADA
 //====================================================================
 //
-// Se restar BUY:
-//     nova SELL STOP = preço de abertura da BUY - FirstStep
+// A nova ordem continua sendo calculada a partir do preço da posição
+// que permaneceu aberta. Porém, o tipo da pendente é escolhido de
+// acordo com a posição do mercado:
 //
-// Se restar SELL:
-//     nova BUY STOP = preço de abertura da SELL + FirstStep
+// RESTOU BUY:
+//   nível = BUY open - FirstStep
+//   abaixo do mercado -> SELL STOP
+//   acima do mercado  -> SELL LIMIT
 //
-// A distância é calculada a partir da posição que permaneceu aberta,
-// e não do preço corrente. Assim o FirstStep é preservado.
+// RESTOU SELL:
+//   nível = SELL open + FirstStep
+//   acima do mercado -> BUY STOP
+//   abaixo do mercado -> BUY LIMIT
+//
+// Assim o EA não perde a segunda ordem simplesmente porque o mercado
+// já ultrapassou o nível calculado durante o fechamento por gain.
 //====================================================================
 
 void PlaceReplacementOrder()
@@ -202,10 +193,6 @@ void PlaceReplacementOrder()
    int remainingType   = -1;
    int remainingTicket = -1;
    double remainingPrice = 0;
-
-   //=================================================================
-   // LOCALIZA A ÚNICA POSIÇÃO ABERTA
-   //=================================================================
 
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
@@ -228,43 +215,65 @@ void PlaceReplacementOrder()
    double minimumDistance = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
 
    //=================================================================
-   // RESTOU BUY -> SELL STOP FirstStep ABAIXO DA BUY
+   // RESTOU BUY -> ORDEM OPOSTA NO NÍVEL BUY - FirstStep
    //=================================================================
 
    if(remainingType == OP_BUY)
    {
-      double sellPrice = NormalizeDouble(
+      double targetPrice = NormalizeDouble(
          remainingPrice - StepPrice(), Digits
       );
 
-      if((Bid - sellPrice) < minimumDistance)
+      int orderType = -1;
+
+      // Nível abaixo do mercado: SELL STOP.
+      if(targetPrice <= Bid - minimumDistance)
+      {
+         orderType = OP_SELLSTOP;
+      }
+      // Nível acima do mercado: SELL LIMIT.
+      else if(targetPrice >= Ask + minimumDistance)
+      {
+         orderType = OP_SELLLIMIT;
+      }
+      else
       {
          Print(
-            "EAGOLD ERROR - Replacement SELL STOP is too close to market. ",
-            "Required FirstStep=", FirstStep,
-            " points."
+            "EAGOLD - Replacement SELL level is inside broker stop distance. ",
+            "Target=", DoubleToString(targetPrice, Digits),
+            " Bid=", DoubleToString(Bid, Digits),
+            " Ask=", DoubleToString(Ask, Digits),
+            " StopLevel=", DoubleToString(minimumDistance / Point, 0),
+            " points"
          );
          return;
       }
 
+      ResetLastError();
+
       int ticket = OrderSend(
-         Symbol(), OP_SELLSTOP, Lots, sellPrice, Slippage,
+         Symbol(), orderType, Lots, targetPrice, Slippage,
          0, 0, "EAGOLD REPLACEMENT SELL", MagicNumber, 0, clrNONE
       );
 
       if(ticket < 0)
       {
+         int error = GetLastError();
          Print(
-            "EAGOLD ERROR - Replacement SELL STOP failed. Error=",
-            GetLastError()
+            "EAGOLD ERROR - Replacement SELL failed. Error=", error,
+            " Type=", orderType,
+            " Target=", DoubleToString(targetPrice, Digits),
+            " Bid=", DoubleToString(Bid, Digits),
+            " Ask=", DoubleToString(Ask, Digits)
          );
          return;
       }
 
       Print(
-         "EAGOLD - Replacement SELL STOP placed.",
+         "EAGOLD - Replacement SELL placed.",
          " Ticket=", ticket,
-         " Price=", DoubleToString(sellPrice, Digits),
+         " Type=", orderType == OP_SELLSTOP ? "SELL STOP" : "SELL LIMIT",
+         " Price=", DoubleToString(targetPrice, Digits),
          " Reference BUY=", DoubleToString(remainingPrice, Digits),
          " FirstStep=", FirstStep, " points"
       );
@@ -273,43 +282,65 @@ void PlaceReplacementOrder()
    }
 
    //=================================================================
-   // RESTOU SELL -> BUY STOP FirstStep ACIMA DA SELL
+   // RESTOU SELL -> ORDEM OPOSTA NO NÍVEL SELL + FirstStep
    //=================================================================
 
    if(remainingType == OP_SELL)
    {
-      double buyPrice = NormalizeDouble(
+      double targetPrice = NormalizeDouble(
          remainingPrice + StepPrice(), Digits
       );
 
-      if((buyPrice - Ask) < minimumDistance)
+      int orderType = -1;
+
+      // Nível acima do mercado: BUY STOP.
+      if(targetPrice >= Ask + minimumDistance)
+      {
+         orderType = OP_BUYSTOP;
+      }
+      // Nível abaixo do mercado: BUY LIMIT.
+      else if(targetPrice <= Bid - minimumDistance)
+      {
+         orderType = OP_BUYLIMIT;
+      }
+      else
       {
          Print(
-            "EAGOLD ERROR - Replacement BUY STOP is too close to market. ",
-            "Required FirstStep=", FirstStep,
-            " points."
+            "EAGOLD - Replacement BUY level is inside broker stop distance. ",
+            "Target=", DoubleToString(targetPrice, Digits),
+            " Bid=", DoubleToString(Bid, Digits),
+            " Ask=", DoubleToString(Ask, Digits),
+            " StopLevel=", DoubleToString(minimumDistance / Point, 0),
+            " points"
          );
          return;
       }
 
+      ResetLastError();
+
       int ticket = OrderSend(
-         Symbol(), OP_BUYSTOP, Lots, buyPrice, Slippage,
+         Symbol(), orderType, Lots, targetPrice, Slippage,
          0, 0, "EAGOLD REPLACEMENT BUY", MagicNumber, 0, clrNONE
       );
 
       if(ticket < 0)
       {
+         int error = GetLastError();
          Print(
-            "EAGOLD ERROR - Replacement BUY STOP failed. Error=",
-            GetLastError()
+            "EAGOLD ERROR - Replacement BUY failed. Error=", error,
+            " Type=", orderType,
+            " Target=", DoubleToString(targetPrice, Digits),
+            " Bid=", DoubleToString(Bid, Digits),
+            " Ask=", DoubleToString(Ask, Digits)
          );
          return;
       }
 
       Print(
-         "EAGOLD - Replacement BUY STOP placed.",
+         "EAGOLD - Replacement BUY placed.",
          " Ticket=", ticket,
-         " Price=", DoubleToString(buyPrice, Digits),
+         " Type=", orderType == OP_BUYSTOP ? "BUY STOP" : "BUY LIMIT",
+         " Price=", DoubleToString(targetPrice, Digits),
          " Reference SELL=", DoubleToString(remainingPrice, Digits),
          " FirstStep=", FirstStep, " points"
       );
@@ -349,6 +380,8 @@ void ManageOrders()
          else
             closePrice = Ask;
 
+         ResetLastError();
+
          bool closed = OrderClose(
             ticket,
             lots,
@@ -384,7 +417,7 @@ void ManageOrders()
 int OnInit()
 {
    Print("==================================================");
-   Print("EAGOLD v0.3.0 INITIALIZED");
+   Print("EAGOLD v0.3.1 INITIALIZED");
    Print("Two-order replacement engine");
    Print("FirstStep    = ", FirstStep, " points");
    Print("ProfitTarget = ", ProfitTarget, " points");
@@ -404,7 +437,7 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    Print(
-      "EAGOLD v0.3.0 DEINITIALIZED. Reason=",
+      "EAGOLD v0.3.1 DEINITIALIZED. Reason=",
       reason
    );
 }
@@ -415,21 +448,12 @@ void OnDeinit(const int reason)
 
 void OnTick()
 {
-   //=================================================================
-   // 1. GERENCIA AS POSIÇÕES
-   //=================================================================
-
    ManageOrders();
 
    int openOrders    = CountOpenOrders();
    int pendingOrders = CountPendingOrders();
 
-   //=================================================================
-   // 2. NENHUMA POSIÇÃO E NENHUMA PENDENTE
-   //
-   // Inicia um novo ciclo.
-   //=================================================================
-
+   // Nenhuma posição e nenhuma pendente: inicia novo ciclo.
    if(openOrders == 0 && pendingOrders == 0)
    {
       if(CycleStarted)
@@ -442,25 +466,13 @@ void OnTick()
       return;
    }
 
-   //=================================================================
-   // 3. UMA POSIÇÃO ABERTA E NENHUMA PENDENTE
-   //
-   // Uma das posições foi fechada por ProfitTarget.
-   // Cria a posição oposta respeitando FirstStep em relação à
-   // posição que permaneceu aberta.
-   //=================================================================
-
+   // Uma posição aberta e nenhuma pendente: uma ordem foi fechada
+   // pelo ProfitTarget. Recria a ordem oposta no nível FirstStep.
    if(openOrders == 1 && pendingOrders == 0)
    {
       PlaceReplacementOrder();
       return;
    }
-
-   //=================================================================
-   // 4. DOIS ORDENS ABERTAS OU UMA PENDENTE
-   //
-   // Mantém o estado atual.
-   //=================================================================
 }
 
 //+------------------------------------------------------------------+
