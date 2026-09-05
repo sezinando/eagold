@@ -3,12 +3,8 @@
 //|                         EAGOLD - Expert Advisor for MT4          |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "000.301"
-#property description "EAGOLD - Two-order engine with robust FirstStep replacement."
-
-//====================================================================
-// INPUTS
-//====================================================================
+#property version   "000.400"
+#property description "EAGOLD - Independent BUY and SELL operation engine."
 
 input int    MagicNumber  = 1001;
 input double Lots         = 0.01;
@@ -17,38 +13,25 @@ input int    ProfitTarget = 150;
 input int    Slippage     = 10;
 
 //====================================================================
-// VARIÁVEIS
-//====================================================================
-
-bool CycleStarted = false;
-
-//====================================================================
 // CONTADORES
 //====================================================================
 
 int CountOpenOrders()
 {
    int count = 0;
-
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(OrderSymbol() != Symbol()) continue;
       if(OrderMagicNumber() != MagicNumber) continue;
-
-      if(OrderType() == OP_BUY || OrderType() == OP_SELL)
-         count++;
+      if(OrderType() == OP_BUY || OrderType() == OP_SELL) count++;
    }
-
    return(count);
 }
-
-//+------------------------------------------------------------------+
 
 int CountPendingOrders()
 {
    int count = 0;
-
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
@@ -56,25 +39,21 @@ int CountPendingOrders()
       if(OrderMagicNumber() != MagicNumber) continue;
 
       int type = OrderType();
-
       if(type == OP_BUYLIMIT || type == OP_BUYSTOP ||
          type == OP_SELLLIMIT || type == OP_SELLSTOP)
-      {
          count++;
-      }
    }
-
    return(count);
 }
 
-//+------------------------------------------------------------------+
+//====================================================================
+// CÁLCULOS
+//====================================================================
 
 double StepPrice()
 {
    return(FirstStep * Point);
 }
-
-//+------------------------------------------------------------------+
 
 double OrderProfitPoints()
 {
@@ -88,265 +67,129 @@ double OrderProfitPoints()
 }
 
 //====================================================================
-// CICLO INICIAL
+// ABRE UMA OPERAÇÃO INDEPENDENTE
+//====================================================================
+//
+// BUY:
+//   abre BUY a mercado
+//   cria SELL pendente FirstStep abaixo da entrada
+//
+// SELL:
+//   abre SELL a mercado
+//   cria BUY pendente FirstStep acima da entrada
+//
+// IMPORTANTE:
+// cada operação é independente. Uma nova operação não cancela,
+// substitui ou depende das ordens pendentes de operações anteriores.
 //====================================================================
 
-void StartCycle()
+bool StartIndependentOperation(int direction)
 {
    RefreshRates();
 
-   double buyPrice = NormalizeDouble(Ask, Digits);
+   int marketType;
+   int pendingType;
+   double marketPrice;
+   double pendingPrice;
 
-   int buyTicket = OrderSend(
-      Symbol(), OP_BUY, Lots, buyPrice, Slippage,
-      0, 0, "EAGOLD BUY", MagicNumber, 0, clrNONE
-   );
-
-   if(buyTicket < 0)
+   if(direction == OP_BUY)
    {
-      Print("EAGOLD ERROR - BUY failed. Error=", GetLastError());
-      return;
+      marketType   = OP_BUY;
+      pendingType  = OP_SELLSTOP;
+      marketPrice  = NormalizeDouble(Ask, Digits);
+      pendingPrice = NormalizeDouble(marketPrice - StepPrice(), Digits);
+   }
+   else if(direction == OP_SELL)
+   {
+      marketType   = OP_SELL;
+      pendingType  = OP_BUYSTOP;
+      marketPrice  = NormalizeDouble(Bid, Digits);
+      pendingPrice = NormalizeDouble(marketPrice + StepPrice(), Digits);
+   }
+   else
+   {
+      return(false);
    }
 
-   Print("EAGOLD - BUY opened. Ticket=", buyTicket,
-         " Price=", DoubleToString(buyPrice, Digits));
-
-   double sellPrice = NormalizeDouble(
-      buyPrice - StepPrice(), Digits
+   int marketTicket = OrderSend(
+      Symbol(), marketType, Lots, marketPrice, Slippage,
+      0, 0,
+      direction == OP_BUY ? "EAGOLD BUY" : "EAGOLD SELL",
+      MagicNumber, 0, clrNONE
    );
 
-   double minimumDistance = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
-
-   if((buyPrice - sellPrice) < minimumDistance)
+   if(marketTicket < 0)
    {
-      sellPrice = NormalizeDouble(
-         buyPrice - minimumDistance, Digits
-      );
+      Print("EAGOLD ERROR - Market order failed. Direction=",
+            direction == OP_BUY ? "BUY" : "SELL",
+            " Error=", GetLastError());
+      return(false);
    }
 
-   int sellTicket = OrderSend(
-      Symbol(), OP_SELLSTOP, Lots, sellPrice, Slippage,
-      0, 0, "EAGOLD SELL", MagicNumber, 0, clrNONE
-   );
-
-   if(sellTicket < 0)
+   // Usa o preço de execução real da ordem como referência do FirstStep.
+   if(OrderSelect(marketTicket, SELECT_BY_TICKET))
    {
-      Print("EAGOLD ERROR - SELL STOP failed. Error=", GetLastError());
+      marketPrice = OrderOpenPrice();
 
-      if(OrderSelect(buyTicket, SELECT_BY_TICKET))
-      {
-         RefreshRates();
-
-         if(!OrderClose(
-            buyTicket, OrderLots(), Bid, Slippage, clrNONE
-         ))
-         {
-            Print(
-               "EAGOLD ERROR - Could not close BUY. Error=",
-               GetLastError()
-            );
-         }
-      }
-
-      return;
+      if(direction == OP_BUY)
+         pendingPrice = NormalizeDouble(marketPrice - StepPrice(), Digits);
+      else
+         pendingPrice = NormalizeDouble(marketPrice + StepPrice(), Digits);
    }
-
-   Print("EAGOLD - SELL STOP placed. Ticket=", sellTicket,
-         " Price=", DoubleToString(sellPrice, Digits),
-         " Distance=", FirstStep, " points");
-
-   CycleStarted = true;
-}
-
-//====================================================================
-// REPOSIÇÃO DA ORDEM FECHADA
-//====================================================================
-//
-// A nova ordem continua sendo calculada a partir do preço da posição
-// que permaneceu aberta. Porém, o tipo da pendente é escolhido de
-// acordo com a posição do mercado:
-//
-// RESTOU BUY:
-//   nível = BUY open - FirstStep
-//   abaixo do mercado -> SELL STOP
-//   acima do mercado  -> SELL LIMIT
-//
-// RESTOU SELL:
-//   nível = SELL open + FirstStep
-//   acima do mercado -> BUY STOP
-//   abaixo do mercado -> BUY LIMIT
-//
-// Assim o EA não perde a segunda ordem simplesmente porque o mercado
-// já ultrapassou o nível calculado durante o fechamento por gain.
-//====================================================================
-
-void PlaceReplacementOrder()
-{
-   if(CountOpenOrders() != 1)
-      return;
-
-   if(CountPendingOrders() != 0)
-      return;
 
    RefreshRates();
 
-   int remainingType   = -1;
-   int remainingTicket = -1;
-   double remainingPrice = 0;
-
-   for(int i = OrdersTotal() - 1; i >= 0; i--)
-   {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(OrderSymbol() != Symbol()) continue;
-      if(OrderMagicNumber() != MagicNumber) continue;
-
-      if(OrderType() != OP_BUY && OrderType() != OP_SELL)
-         continue;
-
-      remainingType    = OrderType();
-      remainingTicket  = OrderTicket();
-      remainingPrice   = OrderOpenPrice();
-      break;
-   }
-
-   if(remainingTicket < 0)
-      return;
-
    double minimumDistance = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
 
-   //=================================================================
-   // RESTOU BUY -> ORDEM OPOSTA NO NÍVEL BUY - FirstStep
-   //=================================================================
-
-   if(remainingType == OP_BUY)
+   // A ordem de proteção/continuidade é sempre criada como STOP na
+   // direção oposta da operação que acabou de nascer.
+   if(direction == OP_BUY)
    {
-      double targetPrice = NormalizeDouble(
-         remainingPrice - StepPrice(), Digits
-      );
-
-      int orderType = -1;
-
-      // Nível abaixo do mercado: SELL STOP.
-      if(targetPrice <= Bid - minimumDistance)
+      if((Bid - pendingPrice) < minimumDistance)
       {
-         orderType = OP_SELLSTOP;
+         Print("EAGOLD ERROR - SELL STOP too close to market. Ticket=",
+               marketTicket, " Error condition: StopLevel.");
+         return(true);
       }
-      // Nível acima do mercado: SELL LIMIT.
-      else if(targetPrice >= Ask + minimumDistance)
+   }
+   else
+   {
+      if((pendingPrice - Ask) < minimumDistance)
       {
-         orderType = OP_SELLLIMIT;
+         Print("EAGOLD ERROR - BUY STOP too close to market. Ticket=",
+               marketTicket, " Error condition: StopLevel.");
+         return(true);
       }
-      else
-      {
-         Print(
-            "EAGOLD - Replacement SELL level is inside broker stop distance. ",
-            "Target=", DoubleToString(targetPrice, Digits),
-            " Bid=", DoubleToString(Bid, Digits),
-            " Ask=", DoubleToString(Ask, Digits),
-            " StopLevel=", DoubleToString(minimumDistance / Point, 0),
-            " points"
-         );
-         return;
-      }
-
-      ResetLastError();
-
-      int ticket = OrderSend(
-         Symbol(), orderType, Lots, targetPrice, Slippage,
-         0, 0, "EAGOLD REPLACEMENT SELL", MagicNumber, 0, clrNONE
-      );
-
-      if(ticket < 0)
-      {
-         int error = GetLastError();
-         Print(
-            "EAGOLD ERROR - Replacement SELL failed. Error=", error,
-            " Type=", orderType,
-            " Target=", DoubleToString(targetPrice, Digits),
-            " Bid=", DoubleToString(Bid, Digits),
-            " Ask=", DoubleToString(Ask, Digits)
-         );
-         return;
-      }
-
-      Print(
-         "EAGOLD - Replacement SELL placed.",
-         " Ticket=", ticket,
-         " Type=", orderType == OP_SELLSTOP ? "SELL STOP" : "SELL LIMIT",
-         " Price=", DoubleToString(targetPrice, Digits),
-         " Reference BUY=", DoubleToString(remainingPrice, Digits),
-         " FirstStep=", FirstStep, " points"
-      );
-
-      return;
    }
 
-   //=================================================================
-   // RESTOU SELL -> ORDEM OPOSTA NO NÍVEL SELL + FirstStep
-   //=================================================================
+   ResetLastError();
 
-   if(remainingType == OP_SELL)
+   int pendingTicket = OrderSend(
+      Symbol(), pendingType, Lots, pendingPrice, Slippage,
+      0, 0,
+      direction == OP_BUY ? "EAGOLD SELL" : "EAGOLD BUY",
+      MagicNumber, 0, clrNONE
+   );
+
+   if(pendingTicket < 0)
    {
-      double targetPrice = NormalizeDouble(
-         remainingPrice + StepPrice(), Digits
-      );
-
-      int orderType = -1;
-
-      // Nível acima do mercado: BUY STOP.
-      if(targetPrice >= Ask + minimumDistance)
-      {
-         orderType = OP_BUYSTOP;
-      }
-      // Nível abaixo do mercado: BUY LIMIT.
-      else if(targetPrice <= Bid - minimumDistance)
-      {
-         orderType = OP_BUYLIMIT;
-      }
-      else
-      {
-         Print(
-            "EAGOLD - Replacement BUY level is inside broker stop distance. ",
-            "Target=", DoubleToString(targetPrice, Digits),
-            " Bid=", DoubleToString(Bid, Digits),
-            " Ask=", DoubleToString(Ask, Digits),
-            " StopLevel=", DoubleToString(minimumDistance / Point, 0),
-            " points"
-         );
-         return;
-      }
-
-      ResetLastError();
-
-      int ticket = OrderSend(
-         Symbol(), orderType, Lots, targetPrice, Slippage,
-         0, 0, "EAGOLD REPLACEMENT BUY", MagicNumber, 0, clrNONE
-      );
-
-      if(ticket < 0)
-      {
-         int error = GetLastError();
-         Print(
-            "EAGOLD ERROR - Replacement BUY failed. Error=", error,
-            " Type=", orderType,
-            " Target=", DoubleToString(targetPrice, Digits),
-            " Bid=", DoubleToString(Bid, Digits),
-            " Ask=", DoubleToString(Ask, Digits)
-         );
-         return;
-      }
-
-      Print(
-         "EAGOLD - Replacement BUY placed.",
-         " Ticket=", ticket,
-         " Type=", orderType == OP_BUYSTOP ? "BUY STOP" : "BUY LIMIT",
-         " Price=", DoubleToString(targetPrice, Digits),
-         " Reference SELL=", DoubleToString(remainingPrice, Digits),
-         " FirstStep=", FirstStep, " points"
-      );
-
-      return;
+      Print("EAGOLD ERROR - Opposite pending order failed. MarketTicket=",
+            marketTicket,
+            " Type=", pendingType,
+            " Price=", DoubleToString(pendingPrice, Digits),
+            " Error=", GetLastError());
+      return(true);
    }
+
+   Print("EAGOLD - Independent operation started. Direction=",
+         direction == OP_BUY ? "BUY" : "SELL",
+         " MarketTicket=", marketTicket,
+         " MarketPrice=", DoubleToString(marketPrice, Digits),
+         " PendingTicket=", pendingTicket,
+         " PendingPrice=", DoubleToString(pendingPrice, Digits),
+         " FirstStep=", FirstStep, " points");
+
+   return(true);
 }
 
 //====================================================================
@@ -357,56 +200,55 @@ void ManageOrders()
 {
    RefreshRates();
 
+   // Processa uma ordem por vez. Após um fechamento com gain, uma nova
+   // operação NA MESMA DIREÇÃO é aberta imediatamente, sem olhar se
+   // existem outras operações ou pendentes de outros ciclos.
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(OrderSymbol() != Symbol()) continue;
       if(OrderMagicNumber() != MagicNumber) continue;
+      if(OrderType() != OP_BUY && OrderType() != OP_SELL) continue;
 
-      if(OrderType() != OP_BUY && OrderType() != OP_SELL)
-         continue;
-
+      int direction = OrderType();
       double profitPoints = OrderProfitPoints();
 
-      if(profitPoints >= ProfitTarget)
+      if(profitPoints < ProfitTarget)
+         continue;
+
+      int ticket = OrderTicket();
+      double lots = OrderLots();
+      double closePrice = direction == OP_BUY ? Bid : Ask;
+
+      ResetLastError();
+
+      bool closed = OrderClose(
+         ticket, lots, closePrice, Slippage, clrNONE
+      );
+
+      if(!closed)
       {
-         int ticket = OrderTicket();
-         double lots = OrderLots();
-
-         double closePrice;
-
-         if(OrderType() == OP_BUY)
-            closePrice = Bid;
-         else
-            closePrice = Ask;
-
-         ResetLastError();
-
-         bool closed = OrderClose(
-            ticket,
-            lots,
-            closePrice,
-            Slippage,
-            clrNONE
-         );
-
-         if(closed)
-         {
-            Print(
-               "EAGOLD - Order closed by ProfitTarget.",
-               " Ticket=", ticket,
-               " ProfitPoints=", DoubleToString(profitPoints, 1)
-            );
-         }
-         else
-         {
-            Print(
-               "EAGOLD ERROR - OrderClose failed.",
-               " Ticket=", ticket,
-               " Error=", GetLastError()
-            );
-         }
+         Print("EAGOLD ERROR - OrderClose failed. Ticket=",
+               ticket, " Error=", GetLastError());
+         continue;
       }
+
+      Print("EAGOLD - Order closed by ProfitTarget. Ticket=", ticket,
+            " Direction=", direction == OP_BUY ? "BUY" : "SELL",
+            " ProfitPoints=", DoubleToString(profitPoints, 1));
+
+      //==============================================================
+      // NOVA OPERAÇÃO INDEPENDENTE
+      //==============================================================
+      //
+      // BUY bateu gain -> abre NOVA BUY.
+      // A SELL pendente original continua intacta.
+      //
+      // SELL bateu gain -> abre NOVA SELL.
+      // As BUYs/pending BUYs existentes continuam intactas.
+      //==============================================================
+
+      StartIndependentOperation(direction);
    }
 }
 
@@ -417,29 +259,20 @@ void ManageOrders()
 int OnInit()
 {
    Print("==================================================");
-   Print("EAGOLD v0.3.1 INITIALIZED");
-   Print("Two-order replacement engine");
+   Print("EAGOLD v0.4.0 INITIALIZED");
+   Print("Independent BUY/SELL operation engine");
    Print("FirstStep    = ", FirstStep, " points");
    Print("ProfitTarget = ", ProfitTarget, " points");
    Print("MagicNumber  = ", MagicNumber);
    Print("Lots         = ", DoubleToString(Lots, 2));
    Print("==================================================");
 
-   CycleStarted = false;
-
    return(INIT_SUCCEEDED);
 }
 
-//====================================================================
-// DEINIT
-//====================================================================
-
 void OnDeinit(const int reason)
 {
-   Print(
-      "EAGOLD v0.3.1 DEINITIALIZED. Reason=",
-      reason
-   );
+   Print("EAGOLD v0.4.0 DEINITIALIZED. Reason=", reason);
 }
 
 //====================================================================
@@ -450,29 +283,11 @@ void OnTick()
 {
    ManageOrders();
 
-   int openOrders    = CountOpenOrders();
-   int pendingOrders = CountPendingOrders();
-
-   // Nenhuma posição e nenhuma pendente: inicia novo ciclo.
-   if(openOrders == 0 && pendingOrders == 0)
-   {
-      if(CycleStarted)
-      {
-         Print("EAGOLD - Cycle finished.");
-         CycleStarted = false;
-      }
-
-      StartCycle();
-      return;
-   }
-
-   // Uma posição aberta e nenhuma pendente: uma ordem foi fechada
-   // pelo ProfitTarget. Recria a ordem oposta no nível FirstStep.
-   if(openOrders == 1 && pendingOrders == 0)
-   {
-      PlaceReplacementOrder();
-      return;
-   }
+   // Se o EA foi iniciado sem nenhuma ordem própria, começa a primeira
+   // operação BUY. Depois disso, todas as operações passam a ser
+   // independentes e são geradas pelos próprios fechamentos com gain.
+   if(CountOpenOrders() == 0 && CountPendingOrders() == 0)
+      StartIndependentOperation(OP_BUY);
 }
 
 //+------------------------------------------------------------------+
