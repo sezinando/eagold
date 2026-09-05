@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.909"
+#property version   "0.910"
 #property description "EAGOLD - observed BUY/SELL distance engine"
 
 input int    MagicNumber       = 1001;
@@ -19,16 +19,11 @@ input double SmartGrid1        = 150;
 input double PendingStepTrail  = 50;
 input int    MaxTrades         = 2000;
 input bool   EnableCloseBy     = false;
-
-string EA_NAME = "EAGOLD";
-datetime LastTradeTime = 0;
-
-// BUY progression was re-measured on the longer 01/07 H1 sample.
-// Pending BUY levels repeatedly differ from the latest BUY by about 2.42
-// price units. 242 points is used as the reference, with a 10-point tolerance.
 input double BuyProgression          = 242;
 input double BuyProgressionTolerance = 10;
 
+string EA_NAME = "EAGOLD";
+datetime LastTradeTime = 0;
 double BuyLevelLot = 0.01;
 datetime LastBuyOpenTime = 0;
 datetime LastBuyProgressionSource = 0;
@@ -134,14 +129,12 @@ void SyncBuyExecutionState()
       LastBuyOpenTime=0;
       return;
    }
-
    if(LastBuyOpenTime==0)
    {
       LastBuyOpenTime=t;
       BuyLevelLot=lots;
       return;
    }
-
    if(t>LastBuyOpenTime)
    {
       LastBuyOpenTime=t;
@@ -167,16 +160,13 @@ double GetNextBuyLot()
    ladder[0]=0.01; ladder[1]=0.03; ladder[2]=0.05; ladder[3]=0.08;
    ladder[4]=0.10; ladder[5]=0.12; ladder[6]=0.15; ladder[7]=0.18;
    ladder[8]=0.20; ladder[9]=0.23; ladder[10]=0.26; ladder[11]=0.30;
-
    double current=BuyLevelLot;
    if(current<=0.0) current=MathMax(Lot,LotIncrement);
-
    int idx=FindBuyLadderIndex(current);
    double next;
    if(idx>=0 && idx<11) next=ladder[idx+1];
    else if(idx==11) next=ladder[11]*Multiplier;
    else next=current*Multiplier;
-
    next=MathMax(LotIncrement,next);
    next=NormalizeDouble(next,DigitsLots);
    if(next>MaxOpenLot) next=MaxOpenLot;
@@ -208,6 +198,7 @@ int SendPending(int type,double lots,double price,string comment)
    price=NormalizePrice(price);
    int ticket=OrderSend(Symbol(),type,lots,price,0,0,0,comment,MagicNumber,0,clrNONE);
    if(ticket>0) LastTradeTime=TimeCurrent();
+   else Print(EA_NAME," OrderSend failed type=",type," price=",DoubleToString(price,Digits)," error=",GetLastError());
    return(ticket);
 }
 
@@ -255,7 +246,10 @@ void EnsureInitialPendings()
 }
 
 // -----------------------------------------------------------------------------
-// BUY ENGINE v0.909
+// BUY ENGINE v0.910
+// IMPORTANT: a BUY STOP is never allowed to chase price upward anymore.
+// It only moves DOWN when Ask falls, i.e. toward the market. When Ask rises,
+// the existing pending level is preserved so price can actually reach it.
 // -----------------------------------------------------------------------------
 void TrailBuyStops()
 {
@@ -263,14 +257,23 @@ void TrailBuyStops()
    {
       if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType()!=OP_BUYSTOP) continue;
+
       RefreshRates();
       double desired=NormalizePrice(Ask+PointsToPrice(FirstStep));
       double current=OrderOpenPrice();
-      if(MathAbs(desired-current)<PointsToPrice(PendingStepTrail)) continue;
+      double trail=PointsToPrice(PendingStepTrail);
       double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
+
+      // BUY STOP moves only downward. If price rises, do NOT move it upward.
+      if(desired>=current) continue;
+      if((current-desired)<trail) continue;
       if(desired<=Ask+stopLevel) continue;
+
+      ResetLastError();
       if(!OrderModify(OrderTicket(),desired,0,0,0,clrNONE))
-         Print(EA_NAME," BUYSTOP trail failed ticket=",OrderTicket()," error=",GetLastError());
+         Print(EA_NAME," BUYSTOP trail failed ticket=",OrderTicket()," current=",DoubleToString(current,Digits)," desired=",DoubleToString(desired,Digits)," error=",GetLastError());
+      else
+         Print(EA_NAME," BUYSTOP moved TOWARD price ticket=",OrderTicket()," from=",DoubleToString(current,Digits)," to=",DoubleToString(desired,Digits));
    }
 }
 
@@ -294,15 +297,12 @@ void ProcessBuyTakeProfit()
       if(Bid<OrderOpenPrice()+TakeProfit) continue;
       if(ClosePosition(OrderTicket(),OrderLots(),OP_BUY,"BUY TP")) closed=true;
    }
-   if(closed)
+   if(closed && CountOpenSide(OP_BUY)==0)
    {
-      if(CountOpenSide(OP_BUY)==0)
-      {
-         BuyLevelLot=MathMax(Lot,LotIncrement);
-         LastBuyProgressionSource=0;
-         DeletePendingSide(OP_BUYSTOP);
-         EnsureBuyResetStop();
-      }
+      BuyLevelLot=MathMax(Lot,LotIncrement);
+      LastBuyProgressionSource=0;
+      DeletePendingSide(OP_BUYSTOP);
+      EnsureBuyResetStop();
    }
 }
 
@@ -337,9 +337,6 @@ void EnsureNextBuyStop()
 
    double lastBuy,lastLots; datetime lastTime;
    if(!GetLatestOpenInfo(OP_BUY,lastBuy,lastLots,lastTime)) return;
-
-   // One progression order per executed BUY state. This prevents a canceled
-   // pending order from being recreated repeatedly at the same level.
    if(LastBuyProgressionSource==lastTime) return;
 
    double target=0.0;
@@ -364,7 +361,9 @@ void EnsureNextBuyStop()
 }
 
 // -----------------------------------------------------------------------------
-// SELL engine - preserved from validated v0.906 behavior
+// SELL ENGINE v0.910
+// IMPORTANT: SELL STOP is below Bid. It only moves UP when Bid rises, i.e.
+// toward the market. It never moves downward when price is moving away.
 // -----------------------------------------------------------------------------
 void TrailSellStops()
 {
@@ -372,17 +371,25 @@ void TrailSellStops()
    {
       if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType()!=OP_SELLSTOP) continue;
+
       RefreshRates();
       double distance=(CountOpenSide(OP_BUY)>0 || CountOpenSide(OP_SELL)>0)
                       ? PointsToPrice(SmartGrid1) : PointsToPrice(PendingStepTrail);
-      double desired=NormalizePrice(Bid+distance);
+      double desired=NormalizePrice(Bid-distance);
       double current=OrderOpenPrice();
-      if(desired<=current) continue;
-      if((desired-current)<PointsToPrice(PendingStepTrail)) continue;
+      double trail=PointsToPrice(PendingStepTrail);
       double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
+
+      // SELL STOP moves only upward. If price falls, do NOT move it downward.
+      if(desired<=current) continue;
+      if((desired-current)<trail) continue;
       if(desired>=Bid-stopLevel) continue;
-      if(!OrderModify(OrderTicket(),OrderOpenPrice(),0,0,0,clrNONE))
-         Print(EA_NAME," SELLSTOP trail failed ticket=",OrderTicket()," error=",GetLastError());
+
+      ResetLastError();
+      if(!OrderModify(OrderTicket(),desired,0,0,0,clrNONE))
+         Print(EA_NAME," SELLSTOP trail failed ticket=",OrderTicket()," current=",DoubleToString(current,Digits)," desired=",DoubleToString(desired,Digits)," error=",GetLastError());
+      else
+         Print(EA_NAME," SELLSTOP moved TOWARD price ticket=",OrderTicket()," from=",DoubleToString(current,Digits)," to=",DoubleToString(desired,Digits));
    }
 }
 
@@ -391,71 +398,74 @@ void EnsureNextSellStop()
    if(HasPendingSide(OP_SELLSTOP)) return;
    if(CountOpenSide(OP_SELL)<=0) return;
    if(!SpreadOK() || !TradeCapacityOK() || !WaitOK()) return;
+
    double lastSell=GetLastOpenPrice(OP_SELL);
    if(lastSell<=0.0) return;
    RefreshRates();
    if(Bid-lastSell<PointsToPrice(2.0*FirstStep)) return;
+
    int sellCount=CountOpenSide(OP_SELL);
    double lots=GetNextSellLot(sellCount);
-   double target=NormalizePrice(lastSell+PointsToPrice(FirstStep));
+   double target=NormalizePrice(Bid-PointsToPrice(FirstStep));
    double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
-   if(target<=Bid+stopLevel) return;
+   if(target>=Bid-stopLevel) return;
    SendPending(OP_SELLSTOP,lots,target,"EAGOLD SELL NEXT");
 }
 
 void ProcessSellProfit()
 {
    if(SellProfit<=0.0) return;
-   double total=0.0; bool hasSell=false;
+   double total=0.0;
+   bool hasSell=false;
+
    for(int i=OrdersTotal()-1;i>=0;i--)
    {
       if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType()!=OP_SELL) continue;
       hasSell=true;
-      total+=OrderProfit()+OrderSwap()+OrderCommission();
+      total += OrderProfit()+OrderSwap()+OrderCommission();
    }
+
    if(!hasSell || total<SellProfit) return;
-   Print(EA_NAME," SELL BASKET TARGET reached total=",DoubleToString(total,2));
+
+   Print(EA_NAME," SELL BASKET TP total=",DoubleToString(total,2));
    DeletePendingSide(OP_SELLSTOP);
-   for(int pass=0;pass<3;pass++)
+
+   for(int j=OrdersTotal()-1;j>=0;j--)
    {
-      bool closedAny=false;
-      for(int i=OrdersTotal()-1;i>=0;i--)
-      {
-         if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
-         if(!IsEAGOLDOrder() || OrderType()!=OP_SELL) continue;
-         if(ClosePosition(OrderTicket(),OrderLots(),OP_SELL,"SELL BASKET")) closedAny=true;
-      }
-      if(!closedAny) break;
+      if(!OrderSelect(j,SELECT_BY_POS,MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder() || OrderType()!=OP_SELL) continue;
+      ClosePosition(OrderTicket(),OrderLots(),OP_SELL,"SELL BASKET TP");
    }
-   if(CountOpenSide(OP_SELL)==0)
+
+   if(CountOpenSide(OP_SELL)==0 && !HasPendingSide(OP_SELLSTOP))
    {
       RefreshRates();
       SendPending(OP_SELLSTOP,Lot,NormalizePrice(Bid-PointsToPrice(FirstStep)),"EAGOLD SELL RESET");
    }
 }
 
+// -----------------------------------------------------------------------------
+// CloseBy framework reserved for later reconstruction.
+// -----------------------------------------------------------------------------
 void ProcessCloseBy()
 {
    if(!EnableCloseBy) return;
-   // Reserved. The H1 sample proves partial CloseBy/residual reconstruction,
-   // but the exact trigger and matching priority are intentionally not yet
-   // automated here.
 }
 
 void UpdateDisplay()
 {
-   Comment(EA_NAME," v0.909\n",
-           "BUY open: ",CountOpenSide(OP_BUY)," | SELL open: ",CountOpenSide(OP_SELL),"\n",
-           "BUY level lot: ",DoubleToString(BuyLevelLot,DigitsLots),"\n",
-           "TP: ",DoubleToString(TakeProfit,2)," | SELL basket: ",DoubleToString(SellProfit,2),"\n",
-           "FirstStep: ",DoubleToString(FirstStep,0)," | BUY progression: ",DoubleToString(BuyProgression,0));
+   string text=EA_NAME+" v0.910";
+   text += "\nBUY="+IntegerToString(CountOpenSide(OP_BUY));
+   text += " SELL="+IntegerToString(CountOpenSide(OP_SELL));
+   text += "\nBUY LOT STATE="+DoubleToString(BuyLevelLot,DigitsLots);
+   Comment(text);
 }
 
 int OnInit()
 {
    SyncBuyExecutionState();
-   Print(EA_NAME," v0.909 initialized");
+   Print(EA_NAME," v0.910 initialized. Pending orders now ratchet TOWARD price only.");
    return(INIT_SUCCEEDED);
 }
 
