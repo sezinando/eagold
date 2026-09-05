@@ -1,11 +1,6 @@
-//+------------------------------------------------------------------+
-//|                                                   EAGOLD.mq4     |
-//| EAGOLD - ZEUS observed pending/trailing engine                  |
-//| Version 0.906 - SELL profit basket closure                     |
-//+------------------------------------------------------------------+
 #property strict
-#property version   "000.906"
-#property description "EAGOLD - observed BUY/SELL engines, stepped SELL trailing, observed lot ladder and SELL profit basket closure."
+#property version   "0.907"
+#property description "EAGOLD - observed BUY/SELL distance engine"
 
 input int    MagicNumber       = 1001;
 input double Lot               = 0.01;
@@ -18,243 +13,91 @@ input double SellProfit        = 30.00;
 input double BasketLoss        = 100.00;
 input int    SpreadLimit       = 100;
 input int    WaitSeconds       = 0;
-input int    FirstStep         = 160;
-input int    MiniGrid1         = 240;
-input int    SmartGrid1        = 150;
-input int    PendingStepTrail  = 50;
+input double FirstStep         = 160;
+input double MiniGrid1         = 240;
+input double SmartGrid1        = 150;
+input double PendingStepTrail  = 50;
 input int    MaxTrades         = 2000;
-
-// CloseBy remains disabled until its exact observed trigger is proven.
 input bool   EnableCloseBy     = false;
 
-color AvgBuyColor  = clrBlue;
-color AvgSellColor = clrRed;
-color PanelColor   = clrWhite;
-
-string AvgBuyLineName  = "EAGOLD_AVG_BUY_LINE";
-string AvgSellLineName = "EAGOLD_AVG_SELL_LINE";
-string AvgBuyTextName  = "EAGOLD_AVG_BUY_TEXT";
-string AvgSellTextName = "EAGOLD_AVG_SELL_TEXT";
-string PanelName       = "EAGOLD_EXPOSURE_PANEL";
-
+string EA_NAME = "EAGOLD";
 datetime LastTradeTime = 0;
+
+// -----------------------------------------------------------------------------
+// Utility
+// -----------------------------------------------------------------------------
+double PointsToPrice(double points)
+{
+   return(points * Point);
+}
+
+double NormalizePrice(double price)
+{
+   return(NormalizeDouble(price, Digits));
+}
+
+bool SpreadOK()
+{
+   if(SpreadLimit <= 0) return(true);
+   RefreshRates();
+   double spread = (Ask - Bid) / Point;
+   return(spread <= SpreadLimit);
+}
+
+bool WaitOK()
+{
+   if(WaitSeconds <= 0 || LastTradeTime <= 0) return(true);
+   return((TimeCurrent() - LastTradeTime) >= WaitSeconds);
+}
+
+bool TradeCapacityOK()
+{
+   int count = 0;
+   for(int i=OrdersTotal()-1; i>=0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(OrderSymbol()!=Symbol() || OrderMagicNumber()!=MagicNumber) continue;
+      count++;
+   }
+   return(count < MaxTrades);
+}
 
 bool IsEAGOLDOrder()
 {
    return(OrderSymbol()==Symbol() && OrderMagicNumber()==MagicNumber);
 }
 
-bool IsOpenPosition()
-{
-   return(OrderType()==OP_BUY || OrderType()==OP_SELL);
-}
-
-bool IsPendingOrder()
-{
-   int type=OrderType();
-   return(type==OP_BUYSTOP || type==OP_SELLSTOP || type==OP_BUYLIMIT || type==OP_SELLLIMIT);
-}
-
-double PointsToPrice(int points)
-{
-   return(points*Point);
-}
-
-double NormalizePrice(double price)
-{
-   return(NormalizeDouble(price,Digits));
-}
-
-double NormalizeLot(double lots)
-{
-   double minLot=MarketInfo(Symbol(),MODE_MINLOT);
-   double maxLot=MarketInfo(Symbol(),MODE_MAXLOT);
-   double step=MarketInfo(Symbol(),MODE_LOTSTEP);
-   if(step<=0.0) step=LotIncrement;
-   if(step<=0.0) step=0.01;
-   if(lots<minLot) lots=minLot;
-   if(maxLot>0.0 && lots>maxLot) lots=maxLot;
-   if(MaxOpenLot>0.0 && lots>MaxOpenLot) lots=MaxOpenLot;
-   lots=MathRound(lots/step)*step;
-   if(lots<minLot) lots=minLot;
-   if(maxLot>0.0 && lots>maxLot) lots=maxLot;
-   if(MaxOpenLot>0.0 && lots>MaxOpenLot) lots=MaxOpenLot;
-   return(NormalizeDouble(lots,DigitsLots));
-}
-
-int CountOpenPositions()
-{
-   int count=0;
-   for(int i=OrdersTotal()-1;i>=0;i--)
-   {
-      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
-      if(IsEAGOLDOrder() && IsOpenPosition()) count++;
-   }
-   return(count);
-}
-
-int CountPendingOrders()
-{
-   int count=0;
-   for(int i=OrdersTotal()-1;i>=0;i--)
-   {
-      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
-      if(IsEAGOLDOrder() && IsPendingOrder()) count++;
-   }
-   return(count);
-}
-
-int CountSide(int side)
-{
-   int count=0;
-   for(int i=OrdersTotal()-1;i>=0;i--)
-   {
-      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
-      if(IsEAGOLDOrder() && OrderType()==side) count++;
-   }
-   return(count);
-}
-
-void GetSideExposure(int side,double &lots,double &pnl,int &count)
-{
-   lots=0.0;
-   pnl=0.0;
-   count=0;
-   for(int i=OrdersTotal()-1;i>=0;i--)
-   {
-      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
-      if(!IsEAGOLDOrder() || OrderType()!=side) continue;
-      lots+=OrderLots();
-      pnl+=OrderProfit()+OrderSwap()+OrderCommission();
-      count++;
-   }
-}
-
-bool SpreadOK()
-{
-   if(SpreadLimit<=0) return(true);
-   RefreshRates();
-   return(((Ask-Bid)/Point)<=SpreadLimit);
-}
-
-bool WaitOK()
-{
-   if(WaitSeconds<=0 || LastTradeTime<=0) return(true);
-   return((TimeCurrent()-LastTradeTime)>=WaitSeconds);
-}
-
-bool TradeCapacityOK()
-{
-   if(MaxTrades<=0) return(true);
-   return((CountOpenPositions()+CountPendingOrders())<MaxTrades);
-}
-
 bool HasPendingSide(int type)
 {
-   for(int i=OrdersTotal()-1;i>=0;i--)
+   for(int i=OrdersTotal()-1; i>=0; i--)
    {
-      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
-      if(IsEAGOLDOrder() && OrderType()==type) return(true);
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder()) continue;
+      if(OrderType()==type) return(true);
    }
    return(false);
 }
 
-bool SendPending(int type,double lots,double price,string comment)
+int CountOpenSide(int type)
 {
-   if(!SpreadOK() || !TradeCapacityOK()) return(false);
-   RefreshRates();
-   lots=NormalizeLot(lots);
-   price=NormalizePrice(price);
-
-   double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
-   if(type==OP_BUYSTOP && price<=Ask+stopLevel) return(false);
-   if(type==OP_SELLSTOP && price>=Bid-stopLevel) return(false);
-
-   ResetLastError();
-   int ticket=OrderSend(Symbol(),type,lots,price,10,0,0,comment,MagicNumber,0,clrNONE);
-   if(ticket<0)
+   int count=0;
+   for(int i=OrdersTotal()-1; i>=0; i--)
    {
-      Print("EAGOLD ERROR - pending send failed type=",type,
-            " price=",DoubleToString(price,Digits)," err=",GetLastError());
-      return(false);
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder()) continue;
+      if(OrderType()==type) count++;
    }
-   LastTradeTime=TimeCurrent();
-   Print("EAGOLD EVENT PENDING - ticket=",ticket,
-         " type=",type," lots=",DoubleToString(lots,DigitsLots),
-         " price=",DoubleToString(price,Digits)," comment=",comment);
-   return(true);
+   return(count);
 }
 
-bool ClosePosition(int ticket,double lots,int type,string reason)
-{
-   if(!OrderSelect(ticket,SELECT_BY_TICKET)) return(false);
-   if(!IsEAGOLDOrder() || OrderType()!=type) return(false);
-   RefreshRates();
-   double price=(type==OP_BUY ? Bid : Ask);
-   ResetLastError();
-   if(!OrderClose(ticket,lots,price,10,clrNONE))
-   {
-      Print("EAGOLD ERROR - close failed ticket=",ticket," err=",GetLastError());
-      return(false);
-   }
-   LastTradeTime=TimeCurrent();
-   Print("EAGOLD EVENT CLOSE - ticket=",ticket,
-         " side=",(type==OP_BUY?"BUY":"SELL"),
-         " reason=",reason," price=",DoubleToString(price,Digits));
-   return(true);
-}
-
-void DeletePendingSide(int type,string reason)
-{
-   for(int i=OrdersTotal()-1;i>=0;i--)
-   {
-      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
-      if(!IsEAGOLDOrder() || OrderType()!=type) continue;
-      int ticket=OrderTicket();
-      ResetLastError();
-      if(OrderDelete(ticket,clrNONE))
-         Print("EAGOLD EVENT DELETE PENDING - ticket=",ticket," reason=",reason);
-      else
-         Print("EAGOLD ERROR - pending delete failed ticket=",ticket," err=",GetLastError());
-   }
-}
-
-// Exact observed SELL ladder from reverse-engineered history.
-double ObservedLotByIndex(int index)
-{
-   if(index<=1) return(NormalizeLot(Lot));
-
-   double ladder[12];
-   ladder[0]=0.01;
-   ladder[1]=0.03;
-   ladder[2]=0.05;
-   ladder[3]=0.08;
-   ladder[4]=0.10;
-   ladder[5]=0.12;
-   ladder[6]=0.15;
-   ladder[7]=0.18;
-   ladder[8]=0.20;
-   ladder[9]=0.23;
-   ladder[10]=0.26;
-   ladder[11]=0.30;
-
-   if(index<=12) return(NormalizeLot(ladder[index-1]));
-
-   double lots=ladder[11];
-   for(int i=13;i<=index;i++)
-      lots=NormalizeLot(lots*Multiplier);
-   return(NormalizeLot(lots));
-}
-
-// Returns the most recently opened position on a side.
-double LastOpenPrice(int side)
+double GetLastOpenPrice(int type)
 {
    datetime latest=0;
    double price=0.0;
-   for(int i=OrdersTotal()-1;i>=0;i--)
+   for(int i=OrdersTotal()-1; i>=0; i--)
    {
-      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
-      if(!IsEAGOLDOrder() || OrderType()!=side) continue;
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder() || OrderType()!=type) continue;
       if(OrderOpenTime()>=latest)
       {
          latest=OrderOpenTime();
@@ -264,87 +107,110 @@ double LastOpenPrice(int side)
    return(price);
 }
 
-void EnsureInitialPendings()
+double GetNextSellLot(int sellCount)
 {
-   if(CountOpenPositions()>0 || CountPendingOrders()>0) return;
-   if(!SpreadOK() || !TradeCapacityOK() || !WaitOK()) return;
+   // Observed ZEUS ladder: 0.01, 0.03, 0.05, 0.08, 0.10, 0.12,
+   // then 0.15, 0.18, 0.20, 0.23, 0.26, 0.30, followed by multiplier.
+   double ladder[12];
+   ladder[0]=0.01; ladder[1]=0.03; ladder[2]=0.05; ladder[3]=0.08;
+   ladder[4]=0.10; ladder[5]=0.12; ladder[6]=0.15; ladder[7]=0.18;
+   ladder[8]=0.20; ladder[9]=0.23; ladder[10]=0.26; ladder[11]=0.30;
 
-   RefreshRates();
-   double buyStop=NormalizePrice(Ask+PointsToPrice(FirstStep));
-   double sellStop=NormalizePrice(Bid-PointsToPrice(FirstStep));
-   SendPending(OP_BUYSTOP,Lot,buyStop,"EAGOLD INITIAL BUY STOP");
-   SendPending(OP_SELLSTOP,Lot,sellStop,"EAGOLD INITIAL SELL STOP");
+   double lots;
+   if(sellCount < 12) lots=ladder[sellCount];
+   else lots=ladder[11] * MathPow(Multiplier, sellCount-11);
+
+   lots=MathMax(LotIncrement, lots);
+   lots=NormalizeDouble(lots, DigitsLots);
+   if(lots > MaxOpenLot) lots=MaxOpenLot;
+   return(lots);
 }
 
-// Stepped SELL pending trailing.
-void TrailSellStops()
+int SendPending(int type, double lots, double price, string comment)
 {
-   if(PendingStepTrail<=0) return;
+   if(!SpreadOK() || !TradeCapacityOK() || !WaitOK()) return(-1);
    RefreshRates();
 
-   bool sideActive=(CountSide(OP_BUY)>0 || CountSide(OP_SELL)>0);
-   int trailPoints=(sideActive && SmartGrid1>0 ? SmartGrid1 : PendingStepTrail);
+   double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
+   if(type==OP_BUYSTOP && price <= Ask+stopLevel) return(-1);
+   if(type==OP_SELLSTOP && price >= Bid-stopLevel) return(-1);
 
-   for(int i=OrdersTotal()-1;i>=0;i--)
+   price=NormalizePrice(price);
+   int ticket=OrderSend(Symbol(),type,lots,price,0,0,0,comment,MagicNumber,0,clrNONE);
+   if(ticket>0) LastTradeTime=TimeCurrent();
+   return(ticket);
+}
+
+bool ClosePosition(int ticket, double lots, int type, string reason)
+{
+   if(!OrderSelect(ticket, SELECT_BY_TICKET)) return(false);
+   RefreshRates();
+   double price=(type==OP_BUY ? Bid : Ask);
+   bool ok=OrderClose(ticket,lots,NormalizePrice(price),0,clrNONE);
+   if(ok)
    {
-      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
-      if(!IsEAGOLDOrder() || OrderType()!=OP_SELLSTOP) continue;
+      LastTradeTime=TimeCurrent();
+      Print(EA_NAME," ",reason," ticket=",ticket," lots=",DoubleToString(lots,DigitsLots),
+            " close=",DoubleToString(price,Digits));
+   }
+   else
+      Print(EA_NAME," OrderClose failed ticket=",ticket," error=",GetLastError());
+   return(ok);
+}
 
-      double oldPrice=OrderOpenPrice();
-      double desired=NormalizePrice(Bid-PointsToPrice(trailPoints));
-      double step=PointsToPrice(PendingStepTrail);
-
-      if(desired<=oldPrice+Point/2.0) continue;
-      if((desired-oldPrice)<step) continue;
-
-      double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
-      if(desired>=Bid-stopLevel) desired=NormalizePrice(Bid-stopLevel);
-      if(desired<=oldPrice+Point/2.0) continue;
-
+void DeletePendingSide(int type)
+{
+   for(int i=OrdersTotal()-1; i>=0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder() || OrderType()!=type) continue;
       int ticket=OrderTicket();
-      ResetLastError();
-      if(OrderModify(ticket,desired,0,0,0,clrNONE))
-      {
-         Print("EAGOLD EVENT TRAIL SELL STOP - ticket=",ticket,
-               " old=",DoubleToString(oldPrice,Digits),
-               " new=",DoubleToString(desired,Digits),
-               " distance=",trailPoints," step=",PendingStepTrail);
-      }
-      else
-         Print("EAGOLD ERROR - trail modify failed ticket=",ticket," err=",GetLastError());
+      if(!OrderDelete(ticket))
+         Print(EA_NAME," OrderDelete failed ticket=",ticket," error=",GetLastError());
    }
 }
 
-// After a SELL is executed, create the next SELL pending only after the
-// observed approximately 2 x FirstStep advance. The pending level itself is
-// last SELL + FirstStep.
-void EnsureNextSellStop()
+// -----------------------------------------------------------------------------
+// Initial engine
+// -----------------------------------------------------------------------------
+void EnsureInitialPendings()
 {
-   if(HasPendingSide(OP_SELLSTOP)) return;
+   if(CountOpenSide(OP_BUY)==0 && !HasPendingSide(OP_BUYSTOP))
+   {
+      if(SpreadOK() && TradeCapacityOK() && WaitOK())
+      {
+         RefreshRates();
+         double target=NormalizePrice(Ask+PointsToPrice(FirstStep));
+         SendPending(OP_BUYSTOP,Lot,target,"EAGOLD BUY INITIAL");
+      }
+   }
 
-   double lastSell=LastOpenPrice(OP_SELL);
-   if(lastSell<=0.0) return;
-   if(!SpreadOK() || !TradeCapacityOK() || !WaitOK()) return;
-
-   RefreshRates();
-   if((Bid-lastSell)<PointsToPrice(FirstStep*2)) return;
-
-   double target=NormalizePrice(lastSell+PointsToPrice(FirstStep));
-   double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
-   if(target>=Bid-stopLevel) return;
-
-   int index=CountSide(OP_SELL)+1;
-   double lots=ObservedLotByIndex(index);
-   SendPending(OP_SELLSTOP,lots,target,"EAGOLD NEXT SELL STOP #"+IntegerToString(index));
+   if(CountOpenSide(OP_SELL)==0 && !HasPendingSide(OP_SELLSTOP))
+   {
+      if(SpreadOK() && TradeCapacityOK() && WaitOK())
+      {
+         RefreshRates();
+         double target=NormalizePrice(Bid-PointsToPrice(FirstStep));
+         SendPending(OP_SELLSTOP,Lot,target,"EAGOLD SELL INITIAL");
+      }
+   }
 }
 
-// After a profitable BUY close, recycle an independent BUY STOP.
+// -----------------------------------------------------------------------------
+// BUY ENGINE - independent of SELL engine
+// Observed behavior:
+// 1) Initial BUY STOP = Ask + FirstStep.
+// 2) BUY closes individually at Bid >= open + TakeProfit.
+// 3) After profitable BUY close, a new BUY STOP is created at Ask + MiniGrid1.
+// 4) BUY STOP is not trailed by this engine.
+// 5) BUY lot remains the base Lot on every recycle.
+// -----------------------------------------------------------------------------
 void EnsureBuyStopAfterTP()
 {
    if(HasPendingSide(OP_BUYSTOP)) return;
    if(!SpreadOK() || !TradeCapacityOK() || !WaitOK()) return;
-   RefreshRates();
 
+   RefreshRates();
    double target=NormalizePrice(Ask+PointsToPrice(MiniGrid1));
    double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
    if(target<=Ask+stopLevel) return;
@@ -356,13 +222,14 @@ void ProcessBuyTakeProfit()
 {
    if(TakeProfit<=0.0) return;
 
-   for(int i=OrdersTotal()-1;i>=0;i--)
+   for(int i=OrdersTotal()-1; i>=0; i--)
    {
-      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType()!=OP_BUY) continue;
 
       double target=OrderOpenPrice()+TakeProfit;
-      if(Bid<target) continue;
+      RefreshRates();
+      if(Bid < target) continue;
 
       int ticket=OrderTicket();
       double lots=OrderLots();
@@ -371,98 +238,139 @@ void ProcessBuyTakeProfit()
    }
 }
 
-// SELL PROFIT is a side-specific basket target. It sums the current SELL
-// positions including swap/commission. When the target is reached, all SELL
-// positions are closed together, pending SELL orders are removed, and a new
-// 0.01 SELL STOP is started from Bid - FirstStep. BUY positions are untouched.
+// -----------------------------------------------------------------------------
+// SELL engine
+// -----------------------------------------------------------------------------
+void TrailSellStops()
+{
+   for(int i=OrdersTotal()-1; i>=0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder() || OrderType()!=OP_SELLSTOP) continue;
+
+      RefreshRates();
+      double distance;
+      if(CountOpenSide(OP_BUY)>0 || CountOpenSide(OP_SELL)>0)
+         distance=PointsToPrice(SmartGrid1);
+      else
+         distance=PointsToPrice(PendingStepTrail);
+
+      double desired=NormalizePrice(Bid+distance);
+      double current=OrderOpenPrice();
+
+      if(desired <= current) continue;
+      if((desired-current) < PointsToPrice(PendingStepTrail)) continue;
+
+      double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
+      if(desired >= Bid-stopLevel) continue;
+
+      int ticket=OrderTicket();
+      if(!OrderModify(ticket,OrderOpenPrice(),0,0,0,clrNONE))
+         Print(EA_NAME," SELLSTOP trail failed ticket=",ticket," error=",GetLastError());
+   }
+}
+
+void EnsureNextSellStop()
+{
+   if(HasPendingSide(OP_SELLSTOP)) return;
+   if(CountOpenSide(OP_SELL)<=0) return;
+   if(!SpreadOK() || !TradeCapacityOK() || !WaitOK()) return;
+
+   double lastSell=GetLastOpenPrice(OP_SELL);
+   if(lastSell<=0.0) return;
+
+   RefreshRates();
+   double triggerDistance=PointsToPrice(2.0*FirstStep);
+   if(Bid-lastSell < triggerDistance) return;
+
+   int sellCount=CountOpenSide(OP_SELL);
+   double lots=GetNextSellLot(sellCount);
+   double target=NormalizePrice(lastSell+PointsToPrice(FirstStep));
+
+   double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
+   if(target<=Bid+stopLevel) return;
+
+   SendPending(OP_SELLSTOP,lots,target,"EAGOLD SELL NEXT");
+}
+
 void ProcessSellProfit()
 {
    if(SellProfit<=0.0) return;
 
-   double sellLots,sellPnl;
-   int sellCount;
-   GetSideExposure(OP_SELL,sellLots,sellPnl,sellCount);
-   if(sellCount<=0) return;
-   if(sellPnl<SellProfit) return;
-
-   Print("EAGOLD EVENT SELL PROFIT TARGET - pnl=",DoubleToString(sellPnl,2),
-         " target=",DoubleToString(SellProfit,2),
-         " positions=",sellCount," lots=",DoubleToString(sellLots,DigitsLots));
-
-   DeletePendingSide(OP_SELLSTOP,"SELL PROFIT RESET");
-
-   for(int i=OrdersTotal()-1;i>=0;i--)
+   double total=0.0;
+   bool hasSell=false;
+   for(int i=OrdersTotal()-1; i>=0; i--)
    {
-      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType()!=OP_SELL) continue;
-      int ticket=OrderTicket();
-      double lots=OrderLots();
-      ClosePosition(ticket,lots,OP_SELL,"SELL PROFIT");
+      hasSell=true;
+      total += OrderProfit()+OrderSwap()+OrderCommission();
    }
 
-   // Start a fresh SELL cycle independently of the BUY engine.
-   if(!HasPendingSide(OP_SELLSTOP) && SpreadOK() && TradeCapacityOK())
+   if(!hasSell || total < SellProfit) return;
+
+   Print(EA_NAME," SELL BASKET TARGET reached total=",DoubleToString(total,2),
+         " target=",DoubleToString(SellProfit,2));
+
+   DeletePendingSide(OP_SELLSTOP);
+
+   for(int pass=0; pass<3; pass++)
+   {
+      bool closedAny=false;
+      for(int i=OrdersTotal()-1; i>=0; i--)
+      {
+         if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+         if(!IsEAGOLDOrder() || OrderType()!=OP_SELL) continue;
+         int ticket=OrderTicket();
+         double lots=OrderLots();
+         if(ClosePosition(ticket,lots,OP_SELL,"SELL BASKET")) closedAny=true;
+      }
+      if(!closedAny) break;
+   }
+
+   if(CountOpenSide(OP_SELL)==0)
    {
       RefreshRates();
       double target=NormalizePrice(Bid-PointsToPrice(FirstStep));
-      SendPending(OP_SELLSTOP,Lot,target,"EAGOLD SELL PROFIT RESET");
+      SendPending(OP_SELLSTOP,Lot,target,"EAGOLD SELL RESET");
    }
 }
 
 void ProcessCloseBy()
 {
    if(!EnableCloseBy) return;
-   // Reserved. The historical sample proves OrderCloseBy exists, but its
-   // trigger is not yet sufficiently determined for automatic execution.
-}
-
-void OnInit()
-{
-   Print("EAGOLD v0.906 initialized - SELL PROFIT=",DoubleToString(SellProfit,2));
-}
-
-void OnDeinit(const int reason)
-{
-   if(ObjectFind(0,AvgBuyLineName)>=0) ObjectDelete(0,AvgBuyLineName);
-   if(ObjectFind(0,AvgSellLineName)>=0) ObjectDelete(0,AvgSellLineName);
-   if(ObjectFind(0,AvgBuyTextName)>=0) ObjectDelete(0,AvgBuyTextName);
-   if(ObjectFind(0,AvgSellTextName)>=0) ObjectDelete(0,AvgSellTextName);
-   if(ObjectFind(0,PanelName)>=0) ObjectDelete(0,PanelName);
+   // Reserved: the observed CloseBy event is known to exist in the reference
+   // behavior, but its exact trigger/partial-volume rule has not been proven.
 }
 
 void UpdateDisplay()
 {
-   double buyLots,buyPnl,sellLots,sellPnl;
-   int buyCount,sellCount;
-   GetSideExposure(OP_BUY,buyLots,buyPnl,buyCount);
-   GetSideExposure(OP_SELL,sellLots,sellPnl,sellCount);
+   Comment(EA_NAME," v0.907\n",
+           "BUY open: ",CountOpenSide(OP_BUY),
+           " | SELL open: ",CountOpenSide(OP_SELL),"\n",
+           "BUY TP: ",DoubleToString(TakeProfit,2),
+           " | SELL basket: ",DoubleToString(SellProfit,2),"\n",
+           "FirstStep: ",DoubleToString(FirstStep,0),
+           " | MiniGrid1: ",DoubleToString(MiniGrid1,0),
+           " | SmartGrid1: ",DoubleToString(SmartGrid1,0));
+}
 
-   string text="EAGOLD v0.906 [OBSERVED ENGINE]\n"+
-      "BUY  : "+IntegerToString(buyCount)+" / "+DoubleToString(buyLots,2)+" lot / P/L "+DoubleToString(buyPnl,2)+"\n"+
-      "SELL : "+IntegerToString(sellCount)+" / "+DoubleToString(sellLots,2)+" lot / P/L "+DoubleToString(sellPnl,2)+"\n"+
-      "PENDING: "+IntegerToString(CountPendingOrders())+"\n"+
-      "FirstStep="+IntegerToString(FirstStep)+"  TrailStep="+IntegerToString(PendingStepTrail)+"\n"+
-      "SELL Profit="+DoubleToString(SellProfit,2)+"  CloseBy="+(EnableCloseBy?"ON":"OFF")+"\n"+
-      "Balance="+DoubleToString(AccountBalance(),2)+" Equity="+DoubleToString(AccountEquity(),2);
+// -----------------------------------------------------------------------------
+// MT4 events
+// -----------------------------------------------------------------------------
+int OnInit()
+{
+   Print(EA_NAME," v0.907 initialized");
+   return(INIT_SUCCEEDED);
+}
 
-   if(ObjectFind(0,PanelName)<0) ObjectCreate(0,PanelName,OBJ_LABEL,0,0,0);
-   ObjectSetString(0,PanelName,OBJPROP_TEXT,text);
-   ObjectSetString(0,PanelName,OBJPROP_FONT,"Consolas");
-   ObjectSetInteger(0,PanelName,OBJPROP_FONTSIZE,9);
-   ObjectSetInteger(0,PanelName,OBJPROP_CORNER,CORNER_LEFT_UPPER);
-   ObjectSetInteger(0,PanelName,OBJPROP_XDISTANCE,10);
-   ObjectSetInteger(0,PanelName,OBJPROP_YDISTANCE,20);
-   ObjectSetInteger(0,PanelName,OBJPROP_COLOR,PanelColor);
-   ObjectSetInteger(0,PanelName,OBJPROP_SELECTABLE,false);
-   ObjectSetInteger(0,PanelName,OBJPROP_SELECTED,false);
+void OnDeinit(const int reason)
+{
+   Comment("");
 }
 
 void OnTick()
 {
-   RefreshRates();
-
-   // SELL PROFIT is evaluated before new SELL exposure is added, so the
-   // basket can close as soon as its monetary target is reached.
    ProcessSellProfit();
    ProcessBuyTakeProfit();
    TrailSellStops();
@@ -471,4 +379,3 @@ void OnTick()
    ProcessCloseBy();
    UpdateDisplay();
 }
-//+------------------------------------------------------------------+
