@@ -1,6 +1,6 @@
 #property strict
-#property version   "0.008"
-#property description "EAGOLD - FirstStep, directional trailing, BUY TP and fixed SELL progression"
+#property version   "0.009"
+#property description "EAGOLD - FirstStep, directional trailing, BUY TP and SELL progression trigger fix"
 
 input int    MagicNumber              = 1001;
 input double Lot                      = 0.01;
@@ -141,8 +141,8 @@ void TrailSellStop()
 {
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType() != OP_SELLSTOP) continue;
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(OrderComment() != "EAGOLD FIRST STEP SELL") continue;
 
       RefreshRates();
@@ -210,70 +210,101 @@ void ProcessBuyTakeProfit()
    }
 }
 
-// SELL PROGRESSION:
-// When price moves against the latest EAGOLD SELL by FirstStep,
-// create one new SELL STOP at latest SELL open price + SmartGrid1.
-// The progression order is FIXED and is not subject to SELL STOP trailing.
-// The next trigger is always measured from the most recently activated SELL.
-// Only one SELL STOP progression order is allowed at a time.
-void ProcessSellProgression()
+// Return the most recently activated SELL.
+// Ticket number is used as the tie-breaker when several SELLs are opened
+// within the same second, which is common in fast backtests.
+bool GetLatestSell(double &latestSellOpen, int &latestSellTicket)
 {
-   if(FirstStep <= 0.0 || SmartGrid1 <= 0.0) return;
-
-   // If a SELL STOP already exists, wait for it to be activated.
-   if(CountOrders(OP_SELLSTOP) > 0)
-      return;
-
-   double latestSellOpen = 0.0;
-   datetime latestSellTime = 0;
+   latestSellOpen   = 0.0;
+   latestSellTicket = -1;
    bool foundSell = false;
 
-   // Find the most recently opened EAGOLD SELL.
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType() != OP_SELL) continue;
 
-      if(!foundSell || OrderOpenTime() > latestSellTime)
+      int ticket = OrderTicket();
+
+      if(!foundSell ||
+         OrderOpenTime() > OrderOpenTimeOfTicket(latestSellTicket) ||
+         (OrderOpenTime() == OrderOpenTimeOfTicket(latestSellTicket) && ticket > latestSellTicket))
       {
          foundSell = true;
-         latestSellTime = OrderOpenTime();
          latestSellOpen = OrderOpenPrice();
+         latestSellTicket = ticket;
       }
    }
 
-   if(!foundSell) return;
+   return(foundSell);
+}
+
+// Helper used only to compare SELL open times safely.
+datetime OrderOpenTimeOfTicket(int ticket)
+{
+   if(ticket < 0) return(0);
+   if(!OrderSelect(ticket, SELECT_BY_TICKET, MODE_TRADES)) return(0);
+   return(OrderOpenTime());
+}
+
+// SELL PROGRESSION:
+// A new progression SELL STOP may be created ONLY after the price has moved
+// FirstStep points AGAINST THE MOST RECENTLY ACTIVATED SELL.
+// The reference is the actual open price of that SELL.
+// The new SELL STOP is then fixed at latest SELL open + SmartGrid1.
+void ProcessSellProgression()
+{
+   if(FirstStep <= 0.0 || SmartGrid1 <= 0.0) return;
+
+   // Never create another progression while one is already pending.
+   if(CountOrders(OP_SELLSTOP) > 0)
+      return;
+
+   double latestSellOpen = 0.0;
+   int latestSellTicket = -1;
+
+   if(!GetLatestSell(latestSellOpen, latestSellTicket))
+      return;
 
    RefreshRates();
 
-   // Trigger ONLY after price reaches FirstStep above the latest SELL entry.
+   // For a SELL, adverse movement is an increase in BID.
+   // The trigger is EXACTLY FirstStep above the actual latest SELL entry.
    double triggerPrice = NormalizePrice(latestSellOpen + PointsToPrice(FirstStep));
 
-   if(Ask < triggerPrice)
+   if(Bid < triggerPrice)
       return;
 
-   // The new SELL STOP is placed SmartGrid1 above the latest SELL entry.
-   // It stays fixed there until activated.
+   // Only after the trigger has been reached do we place the next SELL STOP.
    double newSellStop = NormalizePrice(latestSellOpen + PointsToPrice(SmartGrid1));
 
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
    if(newSellStop >= Bid - stopLevel)
    {
       Print(EA_NAME,
-            " SELL progression waiting: new SELL STOP too close to BID. latestSell=",
-            DoubleToString(latestSellOpen, Digits),
+            " SELL progression waiting: new SELL STOP too close to BID. latestTicket=",
+            latestSellTicket,
+            " latestSell=", DoubleToString(latestSellOpen, Digits),
             " trigger=", DoubleToString(triggerPrice, Digits),
-            " newStop=", DoubleToString(newSellStop, Digits),
-            " Bid=", DoubleToString(Bid, Digits));
+            " Bid=", DoubleToString(Bid, Digits),
+            " newStop=", DoubleToString(newSellStop, Digits));
       return;
    }
+
+   Print(EA_NAME,
+         " SELL PROGRESSION TRIGGERED. latestTicket=", latestSellTicket,
+         " latestSell=", DoubleToString(latestSellOpen, Digits),
+         " Bid=", DoubleToString(Bid, Digits),
+         " trigger=", DoubleToString(triggerPrice, Digits),
+         " distance=", DoubleToString((Bid - latestSellOpen) / Point, 1),
+         " newSELLSTOP=", DoubleToString(newSellStop, Digits));
 
    SendPending(OP_SELLSTOP, newSellStop, "EAGOLD SELL PROGRESSION");
 }
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.008 initialized. FirstStep=", DoubleToString(FirstStep, 0),
+   Print(EA_NAME, " v0.009 initialized. FirstStep=", DoubleToString(FirstStep, 0),
          " PendingStepTrail=", DoubleToString(PendingStepTrail, 0),
          " TakeProfit=", DoubleToString(TakeProfit, 2),
          " SmartGrid1=", DoubleToString(SmartGrid1, 0),
@@ -295,7 +326,6 @@ void OnTick()
    // 3. Open BUY      -> close at TakeProfit.
    // 4. Open SELL + FirstStep adverse move -> fixed next SELL STOP at SmartGrid1.
    // 5. SELL progression pending orders do NOT trail.
-   // All other parameters remain intentionally inactive.
    TrailSellStop();
    TrailBuyStop();
    ProcessBuyTakeProfit();
