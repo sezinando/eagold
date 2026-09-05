@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.913"
+#property version   "0.914"
 #property description "EAGOLD - observed BUY/SELL distance engine"
 
 input int    MagicNumber       = 1001;
@@ -305,6 +305,16 @@ void EnsureNextBuyStop()
    }
 }
 
+// Incremental SELL STOP rule:
+// 1) Initial order is placed at Bid - FirstStep.
+// 2) While no market position exists, the desired level follows Ask - FirstStep.
+// 3) OrderModify is executed only when the desired level has advanced by at least PendingStepTrail.
+double GetSellStartupTrailTarget()
+{
+   RefreshRates();
+   return(NormalizePrice(Ask-PointsToPrice(FirstStep)));
+}
+
 void TrailSellStops()
 {
    for(int i=OrdersTotal()-1;i>=0;i--)
@@ -314,14 +324,9 @@ void TrailSellStops()
 
       RefreshRates();
 
-      // Observed ZEUS behavior at startup:
-      // initial SELL STOP = Bid - FirstStep;
-      // immediate repositioning = Ask - FirstStep.
-      // The difference is exactly the spread. In the observed tick:
-      // 4659.71 -> 4660.26 = +0.55 = 55 points.
       double desired;
       if(CountOpenSide(OP_BUY)==0 && CountOpenSide(OP_SELL)==0)
-         desired=NormalizePrice(Ask-PointsToPrice(FirstStep));
+         desired=GetSellStartupTrailTarget();
       else
       {
          double distance=PointsToPrice(SmartGrid1);
@@ -340,7 +345,7 @@ void TrailSellStops()
       if(!OrderModify(OrderTicket(),desired,0,0,0,clrNONE))
          Print(EA_NAME," SELLSTOP trail failed ticket=",OrderTicket()," error=",GetLastError());
       else
-         Print(EA_NAME," SELLSTOP moved TOWARD price ticket=",OrderTicket()," from=",DoubleToString(current,Digits)," to=",DoubleToString(desired,Digits));
+         Print(EA_NAME," SELLSTOP moved TOWARD price ticket=",OrderTicket()," from=",DoubleToString(current,Digits)," to=",DoubleToString(desired,Digits)," trail=",DoubleToString(PendingStepTrail,0));
    }
 }
 
@@ -403,7 +408,7 @@ void ProcessCloseBy()
 
 void UpdateDisplay()
 {
-   string text=EA_NAME+" v0.913";
+   string text=EA_NAME+" v0.914";
    text += "\nBUY="+IntegerToString(CountOpenSide(OP_BUY));
    text += " SELL="+IntegerToString(CountOpenSide(OP_SELL));
    text += "\nMiniGrid1="+DoubleToString(MiniGrid1,Digits);
@@ -416,7 +421,7 @@ void UpdateDisplay()
 int OnInit()
 {
    SyncBuyExecutionState();
-   Print(EA_NAME," v0.913 initialized. Test configuration: FirstStep=160 MiniGrid1=250 SmartGrid1=80 MiniGrid2=80 SmartGrid2=60 PendingStepTrail=50.");
+   Print(EA_NAME," v0.914 initialized. Test configuration: FirstStep=160 MiniGrid1=250 SmartGrid1=80 MiniGrid2=80 SmartGrid2=60 PendingStepTrail=50.");
    return(INIT_SUCCEEDED);
 }
 
