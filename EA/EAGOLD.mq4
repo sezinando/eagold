@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.915"
+#property version   "0.916"
 #property description "EAGOLD - observed BUY/SELL distance engine"
 
 input int    MagicNumber       = 1001;
@@ -305,14 +305,14 @@ void EnsureNextBuyStop()
    }
 }
 
-// Incremental SELL STOP rule:
-// 1) Initial order is placed at Bid - FirstStep.
-// 2) While no market position exists, the desired level follows Bid - FirstStep.
-// 3) OrderModify is executed only when the desired level has advanced by at least PendingStepTrail.
+// SELL startup trail follows ASK - FirstStep.
+// This matches the observed reference: when Ask reaches 4661.86 and FirstStep=160,
+// the pending SELL STOP target becomes 4660.26.
+// PendingStepTrail=50 is the minimum movement required before OrderModify.
 double GetSellStartupTrailTarget()
 {
    RefreshRates();
-   return(NormalizePrice(Bid-PointsToPrice(FirstStep)));
+   return(NormalizePrice(Ask-PointsToPrice(FirstStep)));
 }
 
 void TrailSellStops()
@@ -408,7 +408,7 @@ void ProcessCloseBy()
 
 void UpdateDisplay()
 {
-   string text=EA_NAME+" v0.915";
+   string text=EA_NAME+" v0.916";
    text += "\nBUY="+IntegerToString(CountOpenSide(OP_BUY));
    text += " SELL="+IntegerToString(CountOpenSide(OP_SELL));
    text += "\nMiniGrid1="+DoubleToString(MiniGrid1,Digits);
@@ -421,7 +421,10 @@ void UpdateDisplay()
 int OnInit()
 {
    SyncBuyExecutionState();
-   Print(EA_NAME," v0.915 initialized. Test configuration: FirstStep=160 MiniGrid1=250 SmartGrid1=80 MiniGrid2=80 SmartGrid2=60 PendingStepTrail=50.");
+   Print(EA_NAME," v0.916 initialized. FirstStep=",DoubleToString(FirstStep,0),
+         " PendingStepTrail=",DoubleToString(PendingStepTrail,0));
+   EnsureInitialPendings();
+   UpdateDisplay();
    return(INIT_SUCCEEDED);
 }
 
@@ -432,13 +435,17 @@ void OnDeinit(const int reason)
 
 void OnTick()
 {
-   ProcessSellProfit();
-   ProcessBuyTakeProfit();
-   TrailBuyStops();
-   EnsureNextBuyStop();
-   TrailSellStops();
-   EnsureNextSellStop();
+   RefreshRates();
+
    EnsureInitialPendings();
+   TrailBuyStops();
+   TrailSellStops();
+
+   ProcessBuyTakeProfit();
+   EnsureNextBuyStop();
+   EnsureNextSellStop();
+   ProcessSellProfit();
    ProcessCloseBy();
+
    UpdateDisplay();
 }
