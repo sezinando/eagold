@@ -1,11 +1,27 @@
 #property strict
-#property version   "0.003"
-#property description "EAGOLD - directional FirstStep pending trailing"
+#property version   "0.004"
+#property description "EAGOLD - clean parameter base with directional FirstStep trailing"
 
-input int    MagicNumber       = 1001;
-input double Lot               = 0.01;
-input double FirstStep         = 160.0;
-input double PendingStepTrail  = 50.0;
+input int    MagicNumber              = 1001;
+input double Lot                      = 0.01;
+input double Multiplier               = 1.20;
+input int    DigitsLots               = 2;
+input double LotIncrement              = 0.02;
+input double MaxOpenLot               = 3.00;
+input double TakeProfit               = 5.00;
+input double SellProfit               = 30.00;
+input double BasketLoss               = 100.00;
+input int    SpreadLimit              = 100;
+input int    WaitSeconds              = 0;
+input double FirstStep                = 160.0;
+input double MiniGrid1                = 250.0;
+input double SmartGrid1               = 80.0;
+input double MiniGrid2                = 80.0;
+input double SmartGrid2               = 60.0;
+input double PendingStepTrail         = 50.0;
+input int    MaxTrades                = 2000;
+input bool   EnableCloseBy            = false;
+input double BuyProgressionTolerance  = 10.0;
 
 string EA_NAME = "EAGOLD";
 
@@ -43,6 +59,7 @@ int CountOrders(int type)
    return(count);
 }
 
+// Send one pending order at the requested price.
 int SendPending(int type, double price, string comment)
 {
    RefreshRates();
@@ -51,20 +68,10 @@ int SendPending(int type, double price, string comment)
    price = NormalizePrice(price);
 
    if(type == OP_BUYSTOP && price <= Ask + stopLevel)
-   {
-      Print(EA_NAME, " BUY STOP rejected: price too close to ASK. price=",
-            DoubleToString(price, Digits),
-            " Ask=", DoubleToString(Ask, Digits));
       return(-1);
-   }
 
    if(type == OP_SELLSTOP && price >= Bid - stopLevel)
-   {
-      Print(EA_NAME, " SELL STOP rejected: price too close to BID. price=",
-            DoubleToString(price, Digits),
-            " Bid=", DoubleToString(Bid, Digits));
       return(-1);
-   }
 
    ResetLastError();
 
@@ -94,7 +101,8 @@ int SendPending(int type, double price, string comment)
       Print(EA_NAME,
             " pending created. ticket=", ticket,
             " type=", type,
-            " price=", DoubleToString(price, Digits));
+            " price=", DoubleToString(price, Digits),
+            " lot=", DoubleToString(Lot, DigitsLots));
    }
 
    return(ticket);
@@ -127,6 +135,7 @@ void CreateFirstStepOrders()
    Print(EA_NAME,
          " FIRST STEP. BID=", DoubleToString(Bid, Digits),
          " ASK=", DoubleToString(Ask, Digits),
+         " FirstStep=", DoubleToString(FirstStep, 0),
          " BUY STOP=", DoubleToString(buyPrice, Digits),
          " SELL STOP=", DoubleToString(sellPrice, Digits));
 
@@ -149,16 +158,14 @@ void TrailBuyStop()
 
       RefreshRates();
 
-      double desired = NormalizePrice(Ask + PointsToPrice(FirstStep));
-      double current = OrderOpenPrice();
-      double movement = current - desired;
+      double desired   = NormalizePrice(Ask + PointsToPrice(FirstStep));
+      double current   = OrderOpenPrice();
+      double movement  = current - desired;
       double trailStep = PointsToPrice(PendingStepTrail);
 
-      // BUY STOP only moves downward.
       if(desired >= current)
          continue;
 
-      // Modify only after the pending needs to move by PendingStepTrail.
       if(movement < trailStep)
          continue;
 
@@ -175,7 +182,6 @@ void TrailBuyStop()
                " BUY STOP modify failed. ticket=", OrderTicket(),
                " current=", DoubleToString(current, Digits),
                " desired=", DoubleToString(desired, Digits),
-               " movement=", DoubleToString(movement / Point, 0),
                " error=", GetLastError());
       }
       else
@@ -183,10 +189,7 @@ void TrailBuyStop()
          Print(EA_NAME,
                " BUY STOP TRAIL DOWN. ticket=", OrderTicket(),
                " from=", DoubleToString(current, Digits),
-               " to=", DoubleToString(desired, Digits),
-               " movement=", DoubleToString(movement / Point, 0),
-               " FirstStep=", DoubleToString(FirstStep, 0),
-               " PendingStepTrail=", DoubleToString(PendingStepTrail, 0));
+               " to=", DoubleToString(desired, Digits));
       }
    }
 }
@@ -206,16 +209,14 @@ void TrailSellStop()
 
       RefreshRates();
 
-      double desired = NormalizePrice(Bid - PointsToPrice(FirstStep));
-      double current = OrderOpenPrice();
-      double movement = desired - current;
+      double desired   = NormalizePrice(Bid - PointsToPrice(FirstStep));
+      double current   = OrderOpenPrice();
+      double movement  = desired - current;
       double trailStep = PointsToPrice(PendingStepTrail);
 
-      // SELL STOP only moves upward.
       if(desired <= current)
          continue;
 
-      // Modify only after the pending needs to move by PendingStepTrail.
       if(movement < trailStep)
          continue;
 
@@ -232,7 +233,6 @@ void TrailSellStop()
                " SELL STOP modify failed. ticket=", OrderTicket(),
                " current=", DoubleToString(current, Digits),
                " desired=", DoubleToString(desired, Digits),
-               " movement=", DoubleToString(movement / Point, 0),
                " error=", GetLastError());
       }
       else
@@ -240,10 +240,7 @@ void TrailSellStop()
          Print(EA_NAME,
                " SELL STOP TRAIL UP. ticket=", OrderTicket(),
                " from=", DoubleToString(current, Digits),
-               " to=", DoubleToString(desired, Digits),
-               " movement=", DoubleToString(movement / Point, 0),
-               " FirstStep=", DoubleToString(FirstStep, 0),
-               " PendingStepTrail=", DoubleToString(PendingStepTrail, 0));
+               " to=", DoubleToString(desired, Digits));
       }
    }
 }
@@ -251,12 +248,12 @@ void TrailSellStop()
 int OnInit()
 {
    Print(EA_NAME,
-         " v0.003 initialized. FirstStep=",
+         " v0.004 initialized. FirstStep=",
          DoubleToString(FirstStep, 0),
          " PendingStepTrail=",
          DoubleToString(PendingStepTrail, 0),
          " Lot=",
-         DoubleToString(Lot, 2));
+         DoubleToString(Lot, DigitsLots));
 
    CreateFirstStepOrders();
 
@@ -269,9 +266,10 @@ void OnDeinit(const int reason)
 
 void OnTick()
 {
-   // Directional trailing only:
+   // Current implemented behavior only:
    // Rising price  -> SELL STOP may move UP.
    // Falling price -> BUY STOP may move DOWN.
+   // All other parameters are reserved and intentionally inactive.
    TrailSellStop();
    TrailBuyStop();
 }
