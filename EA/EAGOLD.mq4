@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.917"
+#property version   "0.918"
 #property description "EAGOLD - observed BUY/SELL distance engine"
 
 input int    MagicNumber       = 1001;
@@ -190,7 +190,7 @@ void EnsureInitialPendings()
    if(CountOpenSide(OP_SELL)==0 && !HasPendingSide(OP_SELLSTOP))
    {
       RefreshRates();
-      SendPending(OP_SELLSTOP,Lot,NormalizePrice(Ask-PointsToPrice(FirstStep)),"EAGOLD SELL INITIAL");
+      SendPending(OP_SELLSTOP,Lot,NormalizePrice(Bid-PointsToPrice(FirstStep)),"EAGOLD SELL INITIAL");
    }
 }
 
@@ -305,13 +305,13 @@ void EnsureNextBuyStop()
    }
 }
 
-// SELL startup trail uses ASK as the observed reference.
-// FirstStep is the maintained distance from ASK to the SELL STOP.
-// PendingStepTrail=50 is the minimum ASK movement required before OrderModify.
+// SELL startup trail uses BID as the observed reference.
+// FirstStep is the maintained distance from BID to the SELL STOP.
+// PendingStepTrail=50 is the minimum BID movement required before OrderModify.
 double GetSellStartupTrailTarget()
 {
    RefreshRates();
-   return(NormalizePrice(Ask-PointsToPrice(FirstStep)));
+   return(NormalizePrice(Bid-PointsToPrice(FirstStep)));
 }
 
 void TrailSellStops()
@@ -396,7 +396,7 @@ void ProcessSellProfit()
    if(CountOpenSide(OP_SELL)==0 && !HasPendingSide(OP_SELLSTOP))
    {
       RefreshRates();
-      SendPending(OP_SELLSTOP,Lot,NormalizePrice(Ask-PointsToPrice(FirstStep)),"EAGOLD SELL RESET");
+      SendPending(OP_SELLSTOP,Lot,NormalizePrice(Bid-PointsToPrice(FirstStep)),"EAGOLD SELL RESET");
    }
 }
 
@@ -407,7 +407,7 @@ void ProcessCloseBy()
 
 void UpdateDisplay()
 {
-   string text=EA_NAME+" v0.917";
+   string text=EA_NAME+" v0.918";
    text += "\nBUY="+IntegerToString(CountOpenSide(OP_BUY));
    text += " SELL="+IntegerToString(CountOpenSide(OP_SELL));
    text += "\nMiniGrid1="+DoubleToString(MiniGrid1,Digits);
@@ -420,7 +420,7 @@ void UpdateDisplay()
 int OnInit()
 {
    SyncBuyExecutionState();
-   Print(EA_NAME," v0.917 initialized. FirstStep=",DoubleToString(FirstStep,0),
+   Print(EA_NAME," v0.918 initialized. FirstStep=",DoubleToString(FirstStep,0),
          " PendingStepTrail=",DoubleToString(PendingStepTrail,0));
    EnsureInitialPendings();
    UpdateDisplay();
