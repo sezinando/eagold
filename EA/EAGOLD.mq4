@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.914"
+#property version   "0.915"
 #property description "EAGOLD - observed BUY/SELL distance engine"
 
 input int    MagicNumber       = 1001;
@@ -307,12 +307,12 @@ void EnsureNextBuyStop()
 
 // Incremental SELL STOP rule:
 // 1) Initial order is placed at Bid - FirstStep.
-// 2) While no market position exists, the desired level follows Ask - FirstStep.
+// 2) While no market position exists, the desired level follows Bid - FirstStep.
 // 3) OrderModify is executed only when the desired level has advanced by at least PendingStepTrail.
 double GetSellStartupTrailTarget()
 {
    RefreshRates();
-   return(NormalizePrice(Ask-PointsToPrice(FirstStep)));
+   return(NormalizePrice(Bid-PointsToPrice(FirstStep)));
 }
 
 void TrailSellStops()
@@ -408,7 +408,7 @@ void ProcessCloseBy()
 
 void UpdateDisplay()
 {
-   string text=EA_NAME+" v0.914";
+   string text=EA_NAME+" v0.915";
    text += "\nBUY="+IntegerToString(CountOpenSide(OP_BUY));
    text += " SELL="+IntegerToString(CountOpenSide(OP_SELL));
    text += "\nMiniGrid1="+DoubleToString(MiniGrid1,Digits);
@@ -421,7 +421,7 @@ void UpdateDisplay()
 int OnInit()
 {
    SyncBuyExecutionState();
-   Print(EA_NAME," v0.914 initialized. Test configuration: FirstStep=160 MiniGrid1=250 SmartGrid1=80 MiniGrid2=80 SmartGrid2=60 PendingStepTrail=50.");
+   Print(EA_NAME," v0.915 initialized. Test configuration: FirstStep=160 MiniGrid1=250 SmartGrid1=80 MiniGrid2=80 SmartGrid2=60 PendingStepTrail=50.");
    return(INIT_SUCCEEDED);
 }
 
