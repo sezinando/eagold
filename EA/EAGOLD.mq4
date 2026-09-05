@@ -3,23 +3,26 @@
 //|                         EAGOLD - Expert Advisor for MT4          |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "0.1.1"
-#property description "Initial EAGOLD EA skeleton - Git pull test."
+#property version   "0.1.2"
+#property description "Initial EAGOLD EA skeleton - Git pull test v2."
 
 input int MagicNumber = 1001;
 input double Lots = 0.01;
 
 int OnInit()
   {
-   Print("EAGOLD initialized. MagicNumber=", MagicNumber,
+   Print("==================================================");
+   Print("EAGOLD v0.1.2 INITIALIZED");
+   Print("GitHub -> git pull integration test #2 OK");
+   Print("MagicNumber=", MagicNumber,
          " Lots=", DoubleToString(Lots, 2));
-   Print("EAGOLD v0.1.1 - GitHub pull test successful.");
+   Print("==================================================");
    return(INIT_SUCCEEDED);
   }
 
 void OnDeinit(const int reason)
   {
-   Print("EAGOLD deinitialized. Reason=", reason);
+   Print("EAGOLD v0.1.2 deinitialized. Reason=", reason);
   }
 
 void OnTick()
