@@ -1,19 +1,19 @@
 #property strict
-#property version   "0.004"
-#property description "EAGOLD - clean parameter base with directional FirstStep trailing"
+#property version   "0.005"
+#property description "EAGOLD - FirstStep directional trailing and BUY TakeProfit"
 
 input int    MagicNumber              = 1001;
 input double Lot                      = 0.01;
 input double Multiplier               = 1.20;
 input int    DigitsLots               = 2;
-input double LotIncrement              = 0.02;
+input double LotIncrement             = 0.02;
 input double MaxOpenLot               = 3.00;
 input double TakeProfit               = 5.00;
 input double SellProfit               = 30.00;
 input double BasketLoss               = 100.00;
-input int    SpreadLimit              = 100;
-input int    WaitSeconds              = 0;
-input double FirstStep                = 160.0;
+input int    SpreadLimit               = 100;
+input int    WaitSeconds               = 0;
+input double FirstStep                 = 160.0;
 input double MiniGrid1                = 250.0;
 input double SmartGrid1               = 80.0;
 input double MiniGrid2                = 80.0;
@@ -163,9 +163,11 @@ void TrailBuyStop()
       double movement  = current - desired;
       double trailStep = PointsToPrice(PendingStepTrail);
 
+      // BUY STOP only moves downward.
       if(desired >= current)
          continue;
 
+      // Modify only after the pending needs to move by PendingStepTrail.
       if(movement < trailStep)
          continue;
 
@@ -214,9 +216,11 @@ void TrailSellStop()
       double movement  = desired - current;
       double trailStep = PointsToPrice(PendingStepTrail);
 
+      // SELL STOP only moves upward.
       if(desired <= current)
          continue;
 
+      // Modify only after the pending needs to move by PendingStepTrail.
       if(movement < trailStep)
          continue;
 
@@ -229,7 +233,7 @@ void TrailSellStop()
 
       if(!OrderModify(OrderTicket(), desired, 0, 0, 0, clrNONE))
       {
-         Print(EA_NAME,
+         Print(EAGOLD,
                " SELL STOP modify failed. ticket=", OrderTicket(),
                " current=", DoubleToString(current, Digits),
                " desired=", DoubleToString(desired, Digits),
@@ -245,13 +249,65 @@ void TrailSellStop()
    }
 }
 
+// BUY TAKE PROFIT:
+// Close each open BUY when BID reaches the order open price + TakeProfit.
+// TakeProfit is expressed in price points, just like FirstStep.
+// No other BUY management is implemented here.
+void ProcessBuyTakeProfit()
+{
+   if(TakeProfit <= 0.0)
+      return;
+
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+         continue;
+
+      if(!IsEAGOLDOrder() || OrderType() != OP_BUY)
+         continue;
+
+      RefreshRates();
+
+      double target = NormalizePrice(OrderOpenPrice() + PointsToPrice(TakeProfit));
+
+      if(Bid < target)
+         continue;
+
+      int ticket = OrderTicket();
+      double lots = OrderLots();
+      double closePrice = NormalizePrice(Bid);
+
+      ResetLastError();
+
+      if(!OrderClose(ticket, lots, closePrice, 0, clrNONE))
+      {
+         Print(EA_NAME,
+               " BUY TAKE PROFIT close failed. ticket=", ticket,
+               " open=", DoubleToString(OrderOpenPrice(), Digits),
+               " target=", DoubleToString(target, Digits),
+               " Bid=", DoubleToString(Bid, Digits),
+               " error=", GetLastError());
+      }
+      else
+      {
+         Print(EA_NAME,
+               " BUY TAKE PROFIT. ticket=", ticket,
+               " open=", DoubleToString(OrderOpenPrice(), Digits),
+               " target=", DoubleToString(target, Digits),
+               " close=", DoubleToString(closePrice, Digits));
+      }
+   }
+}
+
 int OnInit()
 {
    Print(EA_NAME,
-         " v0.004 initialized. FirstStep=",
+         " v0.005 initialized. FirstStep=",
          DoubleToString(FirstStep, 0),
          " PendingStepTrail=",
          DoubleToString(PendingStepTrail, 0),
+         " TakeProfit=",
+         DoubleToString(TakeProfit, 2),
          " Lot=",
          DoubleToString(Lot, DigitsLots));
 
@@ -266,10 +322,12 @@ void OnDeinit(const int reason)
 
 void OnTick()
 {
-   // Current implemented behavior only:
-   // Rising price  -> SELL STOP may move UP.
-   // Falling price -> BUY STOP may move DOWN.
-   // All other parameters are reserved and intentionally inactive.
+   // Current implemented behavior:
+   // 1. Rising price  -> SELL STOP may move UP only.
+   // 2. Falling price -> BUY STOP may move DOWN only.
+   // 3. Open BUY     -> close at TakeProfit.
+   // All other parameters remain intentionally inactive.
    TrailSellStop();
    TrailBuyStop();
+   ProcessBuyTakeProfit();
 }
