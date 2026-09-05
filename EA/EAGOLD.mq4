@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.005"
+#property version   "0.006"
 #property description "EAGOLD - FirstStep directional trailing and BUY TakeProfit"
 
 input int    MagicNumber              = 1001;
@@ -25,15 +25,8 @@ input double BuyProgressionTolerance  = 10.0;
 
 string EA_NAME = "EAGOLD";
 
-double PointsToPrice(double points)
-{
-   return(points * Point);
-}
-
-double NormalizePrice(double price)
-{
-   return(NormalizeDouble(price, Digits));
-}
+double PointsToPrice(double points){ return(points * Point); }
+double NormalizePrice(double price){ return(NormalizeDouble(price, Digits)); }
 
 bool IsEAGOLDOrder()
 {
@@ -43,67 +36,37 @@ bool IsEAGOLDOrder()
 int CountOrders(int type)
 {
    int count = 0;
-
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
-         continue;
-
-      if(!IsEAGOLDOrder())
-         continue;
-
-      if(OrderType() == type)
-         count++;
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder()) continue;
+      if(OrderType() == type) count++;
    }
-
    return(count);
 }
 
-// Send one pending order at the requested price.
 int SendPending(int type, double price, string comment)
 {
    RefreshRates();
-
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
    price = NormalizePrice(price);
 
-   if(type == OP_BUYSTOP && price <= Ask + stopLevel)
-      return(-1);
-
-   if(type == OP_SELLSTOP && price >= Bid - stopLevel)
-      return(-1);
+   if(type == OP_BUYSTOP && price <= Ask + stopLevel) return(-1);
+   if(type == OP_SELLSTOP && price >= Bid - stopLevel) return(-1);
 
    ResetLastError();
-
-   int ticket = OrderSend(
-      Symbol(),
-      type,
-      Lot,
-      price,
-      0,
-      0,
-      0,
-      comment,
-      MagicNumber,
-      0,
-      clrNONE
-   );
+   int ticket = OrderSend(Symbol(), type, Lot, price, 0, 0, 0,
+                          comment, MagicNumber, 0, clrNONE);
 
    if(ticket < 0)
-   {
-      Print(EA_NAME,
-            " OrderSend failed. type=", type,
+      Print(EA_NAME, " OrderSend failed. type=", type,
             " price=", DoubleToString(price, Digits),
             " error=", GetLastError());
-   }
    else
-   {
-      Print(EA_NAME,
-            " pending created. ticket=", ticket,
+      Print(EA_NAME, " pending created. ticket=", ticket,
             " type=", type,
             " price=", DoubleToString(price, Digits),
             " lot=", DoubleToString(Lot, DigitsLots));
-   }
 
    return(ticket);
 }
@@ -114,26 +77,19 @@ int SendPending(int type, double price, string comment)
 void CreateFirstStepOrders()
 {
    int total = 0;
-
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
-         continue;
-
-      if(IsEAGOLDOrder())
-         total++;
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(IsEAGOLDOrder()) total++;
    }
 
-   if(total > 0)
-      return;
+   if(total > 0) return;
 
    RefreshRates();
-
    double buyPrice  = NormalizePrice(Ask + PointsToPrice(FirstStep));
    double sellPrice = NormalizePrice(Bid - PointsToPrice(FirstStep));
 
-   Print(EA_NAME,
-         " FIRST STEP. BID=", DoubleToString(Bid, Digits),
+   Print(EA_NAME, " FIRST STEP. BID=", DoubleToString(Bid, Digits),
          " ASK=", DoubleToString(Ask, Digits),
          " FirstStep=", DoubleToString(FirstStep, 0),
          " BUY STOP=", DoubleToString(buyPrice, Digits),
@@ -150,49 +106,31 @@ void TrailBuyStop()
 {
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
-         continue;
-
-      if(!IsEAGOLDOrder() || OrderType() != OP_BUYSTOP)
-         continue;
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder() || OrderType() != OP_BUYSTOP) continue;
 
       RefreshRates();
-
       double desired   = NormalizePrice(Ask + PointsToPrice(FirstStep));
       double current   = OrderOpenPrice();
       double movement  = current - desired;
       double trailStep = PointsToPrice(PendingStepTrail);
 
-      // BUY STOP only moves downward.
-      if(desired >= current)
-         continue;
-
-      // Modify only after the pending needs to move by PendingStepTrail.
-      if(movement < trailStep)
-         continue;
+      if(desired >= current) continue;
+      if(movement < trailStep) continue;
 
       double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
-
-      if(desired <= Ask + stopLevel)
-         continue;
+      if(desired <= Ask + stopLevel) continue;
 
       ResetLastError();
-
       if(!OrderModify(OrderTicket(), desired, 0, 0, 0, clrNONE))
-      {
-         Print(EA_NAME,
-               " BUY STOP modify failed. ticket=", OrderTicket(),
+         Print(EA_NAME, " BUY STOP modify failed. ticket=", OrderTicket(),
                " current=", DoubleToString(current, Digits),
                " desired=", DoubleToString(desired, Digits),
                " error=", GetLastError());
-      }
       else
-      {
-         Print(EA_NAME,
-               " BUY STOP TRAIL DOWN. ticket=", OrderTicket(),
+         Print(EA_NAME, " BUY STOP TRAIL DOWN. ticket=", OrderTicket(),
                " from=", DoubleToString(current, Digits),
                " to=", DoubleToString(desired, Digits));
-      }
    }
 }
 
@@ -203,96 +141,71 @@ void TrailSellStop()
 {
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
-         continue;
-
-      if(!IsEAGOLDOrder() || OrderType() != OP_SELLSTOP)
-         continue;
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder() || OrderType() != OP_SELLSTOP) continue;
 
       RefreshRates();
-
       double desired   = NormalizePrice(Bid - PointsToPrice(FirstStep));
       double current   = OrderOpenPrice();
       double movement  = desired - current;
       double trailStep = PointsToPrice(PendingStepTrail);
 
-      // SELL STOP only moves upward.
-      if(desired <= current)
-         continue;
-
-      // Modify only after the pending needs to move by PendingStepTrail.
-      if(movement < trailStep)
-         continue;
+      if(desired <= current) continue;
+      if(movement < trailStep) continue;
 
       double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
-
-      if(desired >= Bid - stopLevel)
-         continue;
+      if(desired >= Bid - stopLevel) continue;
 
       ResetLastError();
-
       if(!OrderModify(OrderTicket(), desired, 0, 0, 0, clrNONE))
-      {
-         Print(EAGOLD,
-               " SELL STOP modify failed. ticket=", OrderTicket(),
+         Print(EA_NAME, " SELL STOP modify failed. ticket=", OrderTicket(),
                " current=", DoubleToString(current, Digits),
                " desired=", DoubleToString(desired, Digits),
                " error=", GetLastError());
-      }
       else
-      {
-         Print(EA_NAME,
-               " SELL STOP TRAIL UP. ticket=", OrderTicket(),
+         Print(EA_NAME, " SELL STOP TRAIL UP. ticket=", OrderTicket(),
                " from=", DoubleToString(current, Digits),
                " to=", DoubleToString(desired, Digits));
-      }
    }
 }
 
 // BUY TAKE PROFIT:
-// Close each open BUY when BID reaches the order open price + TakeProfit.
-// TakeProfit is expressed in price points, just like FirstStep.
-// No other BUY management is implemented here.
+// Close each open BUY when BID reaches OpenPrice + TakeProfit.
+// TakeProfit is expressed in points, like FirstStep.
 void ProcessBuyTakeProfit()
 {
-   if(TakeProfit <= 0.0)
-      return;
+   if(TakeProfit <= 0.0) return;
 
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
-         continue;
-
-      if(!IsEAGOLDOrder() || OrderType() != OP_BUY)
-         continue;
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder() || OrderType() != OP_BUY) continue;
 
       RefreshRates();
 
-      double target = NormalizePrice(OrderOpenPrice() + PointsToPrice(TakeProfit));
+      double openPrice = OrderOpenPrice();
+      double target    = NormalizePrice(openPrice + PointsToPrice(TakeProfit));
 
-      if(Bid < target)
-         continue;
+      // BUY positions close at BID.
+      if(Bid < target) continue;
 
-      int ticket = OrderTicket();
-      double lots = OrderLots();
+      int ticket        = OrderTicket();
+      double lots       = OrderLots();
       double closePrice = NormalizePrice(Bid);
 
       ResetLastError();
-
       if(!OrderClose(ticket, lots, closePrice, 0, clrNONE))
       {
-         Print(EA_NAME,
-               " BUY TAKE PROFIT close failed. ticket=", ticket,
-               " open=", DoubleToString(OrderOpenPrice(), Digits),
+         Print(EA_NAME, " BUY TAKE PROFIT close failed. ticket=", ticket,
+               " open=", DoubleToString(openPrice, Digits),
                " target=", DoubleToString(target, Digits),
                " Bid=", DoubleToString(Bid, Digits),
                " error=", GetLastError());
       }
       else
       {
-         Print(EA_NAME,
-               " BUY TAKE PROFIT. ticket=", ticket,
-               " open=", DoubleToString(OrderOpenPrice(), Digits),
+         Print(EA_NAME, " BUY TAKE PROFIT. ticket=", ticket,
+               " open=", DoubleToString(openPrice, Digits),
                " target=", DoubleToString(target, Digits),
                " close=", DoubleToString(closePrice, Digits));
       }
@@ -301,18 +214,12 @@ void ProcessBuyTakeProfit()
 
 int OnInit()
 {
-   Print(EA_NAME,
-         " v0.005 initialized. FirstStep=",
-         DoubleToString(FirstStep, 0),
-         " PendingStepTrail=",
-         DoubleToString(PendingStepTrail, 0),
-         " TakeProfit=",
-         DoubleToString(TakeProfit, 2),
-         " Lot=",
-         DoubleToString(Lot, DigitsLots));
+   Print(EA_NAME, " v0.006 initialized. FirstStep=", DoubleToString(FirstStep, 0),
+         " PendingStepTrail=", DoubleToString(PendingStepTrail, 0),
+         " TakeProfit=", DoubleToString(TakeProfit, 2),
+         " Lot=", DoubleToString(Lot, DigitsLots));
 
    CreateFirstStepOrders();
-
    return(INIT_SUCCEEDED);
 }
 
@@ -322,10 +229,10 @@ void OnDeinit(const int reason)
 
 void OnTick()
 {
-   // Current implemented behavior:
+   // Implemented behavior only:
    // 1. Rising price  -> SELL STOP may move UP only.
    // 2. Falling price -> BUY STOP may move DOWN only.
-   // 3. Open BUY     -> close at TakeProfit.
+   // 3. Open BUY      -> close at TakeProfit.
    // All other parameters remain intentionally inactive.
    TrailSellStop();
    TrailBuyStop();
