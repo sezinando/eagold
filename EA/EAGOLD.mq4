@@ -3,8 +3,8 @@
 //|                         EAGOLD - Expert Advisor for MT4          |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "000.400"
-#property description "EAGOLD - Independent BUY and SELL operation engine."
+#property version   "000.401"
+#property description "EAGOLD - Independent operations with successor after close."
 
 input int    MagicNumber  = 1001;
 input double Lots         = 0.01;
@@ -70,17 +70,12 @@ double OrderProfitPoints()
 // ABRE UMA OPERAÇÃO INDEPENDENTE
 //====================================================================
 //
-// BUY:
-//   abre BUY a mercado
-//   cria SELL pendente FirstStep abaixo da entrada
+// A operação é formada por:
+//   1. uma posição a mercado;
+//   2. sua ordem oposta pendente a FirstStep.
 //
-// SELL:
-//   abre SELL a mercado
-//   cria BUY pendente FirstStep acima da entrada
-//
-// IMPORTANTE:
-// cada operação é independente. Uma nova operação não cancela,
-// substitui ou depende das ordens pendentes de operações anteriores.
+// A pendente pertence a esta operação e não impede que outra operação
+// independente seja criada posteriormente após o fechamento da posição.
 //====================================================================
 
 bool StartIndependentOperation(int direction)
@@ -126,7 +121,7 @@ bool StartIndependentOperation(int direction)
       return(false);
    }
 
-   // Usa o preço de execução real da ordem como referência do FirstStep.
+   // Usa o preço real de execução como referência do FirstStep.
    if(OrderSelect(marketTicket, SELECT_BY_TICKET))
    {
       marketPrice = OrderOpenPrice();
@@ -141,14 +136,12 @@ bool StartIndependentOperation(int direction)
 
    double minimumDistance = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
 
-   // A ordem de proteção/continuidade é sempre criada como STOP na
-   // direção oposta da operação que acabou de nascer.
    if(direction == OP_BUY)
    {
       if((Bid - pendingPrice) < minimumDistance)
       {
          Print("EAGOLD ERROR - SELL STOP too close to market. Ticket=",
-               marketTicket, " Error condition: StopLevel.");
+               marketTicket, " StopLevel condition.");
          return(true);
       }
    }
@@ -157,7 +150,7 @@ bool StartIndependentOperation(int direction)
       if((pendingPrice - Ask) < minimumDistance)
       {
          Print("EAGOLD ERROR - BUY STOP too close to market. Ticket=",
-               marketTicket, " Error condition: StopLevel.");
+               marketTicket, " StopLevel condition.");
          return(true);
       }
    }
@@ -195,14 +188,32 @@ bool StartIndependentOperation(int direction)
 //====================================================================
 // GERENCIAMENTO DAS ORDENS
 //====================================================================
+//
+// REGRA FUNDAMENTAL:
+//
+//   posição aberta NÃO gera nova posição enquanto permanecer aberta.
+//
+//   posição fechada por ProfitTarget -> gera UMA nova posição na
+//   mesma direção.
+//
+// A existência de uma ordem oposta pendente NÃO altera esta regra.
+// Portanto:
+//
+//   BUY aberta + SELL STOP pendente
+//       -> enquanto BUY não fechar: NÃO abre outra BUY.
+//
+//   BUY fecha no gain
+//       -> abre NOVA BUY.
+//       -> SELL STOP anterior permanece.
+//       -> nova BUY recebe sua própria SELL STOP.
+//
+// As operações são independentes.
+//====================================================================
 
 void ManageOrders()
 {
    RefreshRates();
 
-   // Processa uma ordem por vez. Após um fechamento com gain, uma nova
-   // operação NA MESMA DIREÇÃO é aberta imediatamente, sem olhar se
-   // existem outras operações ou pendentes de outros ciclos.
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
@@ -213,6 +224,7 @@ void ManageOrders()
       int direction = OrderType();
       double profitPoints = OrderProfitPoints();
 
+      // Enquanto a posição não atingir o gain, NÃO cria outra posição.
       if(profitPoints < ProfitTarget)
          continue;
 
@@ -237,17 +249,8 @@ void ManageOrders()
             " Direction=", direction == OP_BUY ? "BUY" : "SELL",
             " ProfitPoints=", DoubleToString(profitPoints, 1));
 
-      //==============================================================
-      // NOVA OPERAÇÃO INDEPENDENTE
-      //==============================================================
-      //
-      // BUY bateu gain -> abre NOVA BUY.
-      // A SELL pendente original continua intacta.
-      //
-      // SELL bateu gain -> abre NOVA SELL.
-      // As BUYs/pending BUYs existentes continuam intactas.
-      //==============================================================
-
+      // SOMENTE AGORA nasce a sucessora desta operação.
+      // Nenhuma posição nova é criada antes deste fechamento.
       StartIndependentOperation(direction);
    }
 }
@@ -259,8 +262,8 @@ void ManageOrders()
 int OnInit()
 {
    Print("==================================================");
-   Print("EAGOLD v0.4.0 INITIALIZED");
-   Print("Independent BUY/SELL operation engine");
+   Print("EAGOLD v0.4.1 INITIALIZED");
+   Print("Independent operations / successor only after close");
    Print("FirstStep    = ", FirstStep, " points");
    Print("ProfitTarget = ", ProfitTarget, " points");
    Print("MagicNumber  = ", MagicNumber);
@@ -272,7 +275,7 @@ int OnInit()
 
 void OnDeinit(const int reason)
 {
-   Print("EAGOLD v0.4.0 DEINITIALIZED. Reason=", reason);
+   Print("EAGOLD v0.4.1 DEINITIALIZED. Reason=", reason);
 }
 
 //====================================================================
@@ -283,9 +286,9 @@ void OnTick()
 {
    ManageOrders();
 
-   // Se o EA foi iniciado sem nenhuma ordem própria, começa a primeira
-   // operação BUY. Depois disso, todas as operações passam a ser
-   // independentes e são geradas pelos próprios fechamentos com gain.
+   // Primeira operação somente se não existir nenhuma operação ou
+   // pendente do EAGOLD. A presença de uma pendente, por si só,
+   // nunca dispara uma nova posição.
    if(CountOpenOrders() == 0 && CountPendingOrders() == 0)
       StartIndependentOperation(OP_BUY);
 }
