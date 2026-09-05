@@ -1,6 +1,6 @@
 #property strict
-#property version   "0.007"
-#property description "EAGOLD - FirstStep, directional trailing, BUY TP and SELL progression"
+#property version   "0.008"
+#property description "EAGOLD - FirstStep, directional trailing, BUY TP and fixed SELL progression"
 
 input int    MagicNumber              = 1001;
 input double Lot                      = 0.01;
@@ -12,8 +12,8 @@ input double TakeProfit               = 5.00;
 input double SellProfit               = 30.00;
 input double BasketLoss               = 100.00;
 input int    SpreadLimit               = 100;
-input int    WaitSeconds               = 0;
-input double FirstStep                 = 160.0;
+input int    WaitSeconds              = 0;
+input double FirstStep                = 160.0;
 input double MiniGrid1                = 250.0;
 input double SmartGrid1               = 80.0;
 input double MiniGrid2                = 80.0;
@@ -134,15 +134,16 @@ void TrailBuyStop()
    }
 }
 
-// SELL STOP can only move UP.
-// It follows a rising BID while preserving FirstStep distance.
-// It NEVER moves back DOWN.
+// SELL STOP directional trailing applies ONLY to the original FIRST STEP SELL STOP.
+// Progression SELL STOP orders are fixed at their calculated SmartGrid region
+// and MUST NOT be moved by this trailing logic.
 void TrailSellStop()
 {
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType() != OP_SELLSTOP) continue;
+      if(OrderComment() != "EAGOLD FIRST STEP SELL") continue;
 
       RefreshRates();
       double desired   = NormalizePrice(Bid - PointsToPrice(FirstStep));
@@ -158,12 +159,12 @@ void TrailSellStop()
 
       ResetLastError();
       if(!OrderModify(OrderTicket(), desired, 0, 0, 0, clrNONE))
-         Print(EA_NAME, " SELL STOP modify failed. ticket=", OrderTicket(),
+         Print(EA_NAME, " FIRST STEP SELL STOP modify failed. ticket=", OrderTicket(),
                " current=", DoubleToString(current, Digits),
                " desired=", DoubleToString(desired, Digits),
                " error=", GetLastError());
       else
-         Print(EA_NAME, " SELL STOP TRAIL UP. ticket=", OrderTicket(),
+         Print(EA_NAME, " FIRST STEP SELL STOP TRAIL UP. ticket=", OrderTicket(),
                " from=", DoubleToString(current, Digits),
                " to=", DoubleToString(desired, Digits));
    }
@@ -212,6 +213,7 @@ void ProcessBuyTakeProfit()
 // SELL PROGRESSION:
 // When price moves against the latest EAGOLD SELL by FirstStep,
 // create one new SELL STOP at latest SELL open price + SmartGrid1.
+// The progression order is FIXED and is not subject to SELL STOP trailing.
 // The next trigger is always measured from the most recently activated SELL.
 // Only one SELL STOP progression order is allowed at a time.
 void ProcessSellProgression()
@@ -244,16 +246,16 @@ void ProcessSellProgression()
 
    RefreshRates();
 
-   // A SELL loses as price rises. Trigger after FirstStep against the latest SELL.
+   // Trigger ONLY after price reaches FirstStep above the latest SELL entry.
    double triggerPrice = NormalizePrice(latestSellOpen + PointsToPrice(FirstStep));
 
    if(Ask < triggerPrice)
       return;
 
-   // New SELL STOP is placed SmartGrid1 above the latest SELL entry.
+   // The new SELL STOP is placed SmartGrid1 above the latest SELL entry.
+   // It stays fixed there until activated.
    double newSellStop = NormalizePrice(latestSellOpen + PointsToPrice(SmartGrid1));
 
-   // The new pending must remain below current BID/ASK to be a valid SELL STOP.
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
    if(newSellStop >= Bid - stopLevel)
    {
@@ -271,7 +273,7 @@ void ProcessSellProgression()
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.007 initialized. FirstStep=", DoubleToString(FirstStep, 0),
+   Print(EA_NAME, " v0.008 initialized. FirstStep=", DoubleToString(FirstStep, 0),
          " PendingStepTrail=", DoubleToString(PendingStepTrail, 0),
          " TakeProfit=", DoubleToString(TakeProfit, 2),
          " SmartGrid1=", DoubleToString(SmartGrid1, 0),
@@ -288,10 +290,11 @@ void OnDeinit(const int reason)
 void OnTick()
 {
    // Implemented behavior only:
-   // 1. Rising price  -> SELL STOP may move UP only.
+   // 1. Rising price  -> ORIGINAL FIRST STEP SELL STOP may move UP only.
    // 2. Falling price -> BUY STOP may move DOWN only.
    // 3. Open BUY      -> close at TakeProfit.
-   // 4. Open SELL + FirstStep adverse move -> next SELL STOP at SmartGrid1.
+   // 4. Open SELL + FirstStep adverse move -> fixed next SELL STOP at SmartGrid1.
+   // 5. SELL progression pending orders do NOT trail.
    // All other parameters remain intentionally inactive.
    TrailSellStop();
    TrailBuyStop();
