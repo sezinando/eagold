@@ -3,8 +3,8 @@
 //| EAGOLD - ZEUS observed pending-order engine through order #25   |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "000.902"
-#property description "EAGOLD - Reproduction of observed ZEUS pending/trailing sequence through order 25."
+#property version   "000.903"
+#property description "EAGOLD - ZEUS observed pending/trailing engine. Next SELL STOP trigger set to 2 x FirstStep."
 
 input int    MagicNumber      = 1001;
 input double Lot              = 0.01;
@@ -33,8 +33,8 @@ string AvgBuyTextName  = "EAGOLD_AVG_BUY_TEXT";
 string AvgSellTextName = "EAGOLD_AVG_SELL_TEXT";
 string PanelName       = "EAGOLD_EXPOSURE_PANEL";
 
-int      CycleNumber   = 0;
-datetime LastTradeTime = 0;
+int      CycleNumber    = 0;
+datetime LastTradeTime  = 0;
 int      LastBuyTicket  = -1;
 int      LastSellTicket = -1;
 
@@ -201,7 +201,7 @@ void CreateOrUpdatePanel()
    GetSideExposure(OP_BUY,buyLots,buyPnl,buyCount);
    GetSideExposure(OP_SELL,sellLots,sellPnl,sellCount);
 
-   string text="EAGOLD v0.902 [ZEUS OBSERVED ENGINE]\n"+
+   string text="EAGOLD v0.903 [ZEUS OBSERVED ENGINE]\n"+
       "----------------------------------------------\n"+
       "OPEN BUY: "+IntegerToString(buyCount)+"  "+DoubleToString(buyLots,2)+" lot  P/L "+DoubleToString(buyPnl,2)+"\n"+
       "OPEN SELL: "+IntegerToString(sellCount)+"  "+DoubleToString(sellLots,2)+" lot  P/L "+DoubleToString(sellPnl,2)+"\n"+
@@ -210,7 +210,8 @@ void CreateOrUpdatePanel()
       "  MiniGrid1: "+IntegerToString(MiniGrid1)+
       "  SmartGrid1: "+IntegerToString(SmartGrid1)+"\n"+
       "PendingStepTrail: "+IntegerToString(PendingStepTrail)+
-      "  TP: "+DoubleToString(TakeProfit,2)+"\n"+
+      "  SELL trigger: "+IntegerToString(FirstStep*2)+"\n"+
+      "TP: "+DoubleToString(TakeProfit,2)+"\n"+
       "Balance: "+DoubleToString(AccountBalance(),2)+
       "  Equity: "+DoubleToString(AccountEquity(),2);
 
@@ -342,18 +343,10 @@ void EnsureInitialPendings()
    SendPending(OP_SELLSTOP,Lot,sellStop,"EAGOLD INITIAL SELL STOP");
 }
 
-// Initial pending phase: the observed SELL STOP follows upward with the
-// configured PendingStepTrail. Once BUY is active, trailing distance changes
-// to SmartGrid1. Updates happen only after the market has advanced by the
-// trailing-step amount from the last trailing reference.
-datetime LastTrailSecond=0;
-double   LastTrailBid=0.0;
-
-bool CommentContains(string text,string part)
-{
-   return(StringFind(text,part,0)>=0);
-}
-
+// Pending SELL trailing. Before any market position is active, use
+// PendingStepTrail as the trailing distance. Once a side is active, use
+// SmartGrid1 as the distance. A MODIFY is only allowed after the market has
+// advanced by approximately PendingStepTrail from the current pending level.
 void TrailPendingOrders()
 {
    if(PendingStepTrail<=0 && SmartGrid1<=0) return;
@@ -373,11 +366,8 @@ void TrailPendingOrders()
 
       double desired=NormalizePrice(Bid-PointsToPrice(trailPoints));
       double step=PointsToPrice(PendingStepTrail);
-
-      // Do not modify point-by-point. Each pending order keeps its own
-      // reference; a new modify is allowed only after the market advanced
-      // approximately PendingStepTrail points.
       double reference=oldPrice+PointsToPrice(trailPoints);
+
       if((Bid-reference) < step) continue;
       if(desired <= oldPrice+Point/2.0) continue;
 
@@ -400,10 +390,10 @@ void TrailPendingOrders()
    }
 }
 
-// After a SELL executes, create the next SELL STOP about FirstStep above
-// that executed SELL. It is created only when that level is a valid pending
-// SELL STOP below the current market. The new pending then trails with the
-// SmartGrid1 distance and PendingStepTrail update step.
+// After a SELL executes, the next SELL STOP is NOT created immediately.
+// The observed behavior indicates that price must first advance by
+// 2 x FirstStep from the last executed SELL. Once that trigger is reached,
+// the new SELL STOP is placed FirstStep above the last SELL.
 void EnsureNextSellStop()
 {
    if(HasPendingSide(OP_SELLSTOP)) return;
@@ -413,6 +403,10 @@ void EnsureNextSellStop()
    if(!SpreadOK() || !TradeCapacityOK()) return;
 
    RefreshRates();
+
+   double triggerDistance=PointsToPrice(FirstStep*2);
+   if((Bid-lastSell) < triggerDistance) return;
+
    double target=NormalizePrice(lastSell+PointsToPrice(FirstStep));
    double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
    if(target >= Bid-stopLevel) return;
@@ -519,8 +513,7 @@ bool ProcessBasket()
 
 void ReconcileState()
 {
-   // No forced cancellation of the opposite side. BUY and SELL are separate.
-   // State is reconstructed from live orders so the EA can recover after reattach.
+   // BUY and SELL remain independent. State is reconstructed from live orders.
 }
 
 int OnInit()
