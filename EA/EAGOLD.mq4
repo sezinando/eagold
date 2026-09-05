@@ -1,12 +1,12 @@
 #property strict
-#property version   "0.910"
+#property version   "0.911"
 #property description "EAGOLD - observed BUY/SELL distance engine"
 
 input int    MagicNumber       = 1001;
 input double Lot               = 0.01;
 input double Multiplier        = 1.20;
 input int    DigitsLots        = 2;
-input double LotIncrement      = 0.01;
+input double LotIncrement      = 0.02;
 input double MaxOpenLot        = 3.00;
 input double TakeProfit        = 5.00;
 input double SellProfit        = 30.00;
@@ -16,15 +16,15 @@ input int    WaitSeconds       = 0;
 input double FirstStep         = 160;
 input double MiniGrid1         = 240;
 input double SmartGrid1        = 150;
+input double MiniGrid2         = 80;
+input double SmartGrid2        = 60;
 input double PendingStepTrail  = 50;
 input int    MaxTrades         = 2000;
 input bool   EnableCloseBy     = false;
-input double BuyProgression          = 242;
 input double BuyProgressionTolerance = 10;
 
 string EA_NAME = "EAGOLD";
 datetime LastTradeTime = 0;
-double BuyLevelLot = 0.01;
 datetime LastBuyOpenTime = 0;
 datetime LastBuyProgressionSource = 0;
 
@@ -125,63 +125,20 @@ void SyncBuyExecutionState()
    double price,lots; datetime t;
    if(!GetLatestOpenInfo(OP_BUY,price,lots,t))
    {
-      BuyLevelLot=MathMax(Lot,LotIncrement);
       LastBuyOpenTime=0;
       return;
    }
-   if(LastBuyOpenTime==0)
-   {
+   if(LastBuyOpenTime==0 || t>LastBuyOpenTime)
       LastBuyOpenTime=t;
-      BuyLevelLot=lots;
-      return;
-   }
-   if(t>LastBuyOpenTime)
-   {
-      LastBuyOpenTime=t;
-      BuyLevelLot=lots;
-      Print(EA_NAME," BUY LEVEL updated lot=",DoubleToString(BuyLevelLot,DigitsLots));
-   }
 }
 
-int FindBuyLadderIndex(double lots)
+// Confirmed lot model from the observed progression:
+// L(n) = Lot * Multiplier^n + n * LotIncrement, capped by MaxOpenLot.
+// n is the number of currently open market positions on the same side.
+double GetNextLot(int side)
 {
-   double ladder[12];
-   ladder[0]=0.01; ladder[1]=0.03; ladder[2]=0.05; ladder[3]=0.08;
-   ladder[4]=0.10; ladder[5]=0.12; ladder[6]=0.15; ladder[7]=0.18;
-   ladder[8]=0.20; ladder[9]=0.23; ladder[10]=0.26; ladder[11]=0.30;
-   for(int i=0;i<12;i++)
-      if(MathAbs(lots-ladder[i]) <= (LotIncrement*0.51)) return(i);
-   return(-1);
-}
-
-double GetNextBuyLot()
-{
-   double ladder[12];
-   ladder[0]=0.01; ladder[1]=0.03; ladder[2]=0.05; ladder[3]=0.08;
-   ladder[4]=0.10; ladder[5]=0.12; ladder[6]=0.15; ladder[7]=0.18;
-   ladder[8]=0.20; ladder[9]=0.23; ladder[10]=0.26; ladder[11]=0.30;
-   double current=BuyLevelLot;
-   if(current<=0.0) current=MathMax(Lot,LotIncrement);
-   int idx=FindBuyLadderIndex(current);
-   double next;
-   if(idx>=0 && idx<11) next=ladder[idx+1];
-   else if(idx==11) next=ladder[11]*Multiplier;
-   else next=current*Multiplier;
-   next=MathMax(LotIncrement,next);
-   next=NormalizeDouble(next,DigitsLots);
-   if(next>MaxOpenLot) next=MaxOpenLot;
-   return(next);
-}
-
-double GetNextSellLot(int sellCount)
-{
-   double ladder[12];
-   ladder[0]=0.01; ladder[1]=0.03; ladder[2]=0.05; ladder[3]=0.08;
-   ladder[4]=0.10; ladder[5]=0.12; ladder[6]=0.15; ladder[7]=0.18;
-   ladder[8]=0.20; ladder[9]=0.23; ladder[10]=0.26; ladder[11]=0.30;
-   double lots;
-   if(sellCount<12) lots=ladder[sellCount];
-   else lots=ladder[11]*MathPow(Multiplier,sellCount-11);
+   int n=CountOpenSide(side);
+   double lots=Lot*MathPow(Multiplier,n)+(n*LotIncrement);
    lots=MathMax(LotIncrement,lots);
    lots=NormalizeDouble(lots,DigitsLots);
    if(lots>MaxOpenLot) lots=MaxOpenLot;
@@ -246,10 +203,8 @@ void EnsureInitialPendings()
 }
 
 // -----------------------------------------------------------------------------
-// BUY ENGINE v0.910
-// IMPORTANT: a BUY STOP is never allowed to chase price upward anymore.
-// It only moves DOWN when Ask falls, i.e. toward the market. When Ask rises,
-// the existing pending level is preserved so price can actually reach it.
+// BUY pending trailing
+// BUY STOP only moves downward toward market. It never chases rising price.
 // -----------------------------------------------------------------------------
 void TrailBuyStops()
 {
@@ -264,14 +219,13 @@ void TrailBuyStops()
       double trail=PointsToPrice(PendingStepTrail);
       double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
 
-      // BUY STOP moves only downward. If price rises, do NOT move it upward.
       if(desired>=current) continue;
       if((current-desired)<trail) continue;
       if(desired<=Ask+stopLevel) continue;
 
       ResetLastError();
       if(!OrderModify(OrderTicket(),desired,0,0,0,clrNONE))
-         Print(EA_NAME," BUYSTOP trail failed ticket=",OrderTicket()," current=",DoubleToString(current,Digits)," desired=",DoubleToString(desired,Digits)," error=",GetLastError());
+         Print(EA_NAME," BUYSTOP trail failed ticket=",OrderTicket()," error=",GetLastError());
       else
          Print(EA_NAME," BUYSTOP moved TOWARD price ticket=",OrderTicket()," from=",DoubleToString(current,Digits)," to=",DoubleToString(desired,Digits));
    }
@@ -297,24 +251,29 @@ void ProcessBuyTakeProfit()
       if(Bid<OrderOpenPrice()+TakeProfit) continue;
       if(ClosePosition(OrderTicket(),OrderLots(),OP_BUY,"BUY TP")) closed=true;
    }
+
    if(closed && CountOpenSide(OP_BUY)==0)
    {
-      BuyLevelLot=MathMax(Lot,LotIncrement);
       LastBuyProgressionSource=0;
       DeletePendingSide(OP_BUYSTOP);
       EnsureBuyResetStop();
    }
 }
 
+// MiniGrid1 is now the observed structural BUY progression parameter.
+// The tolerance remains explicit because the source EA operates on live ticks.
 bool BuyProgressionTrigger(double lastBuy,double &target,string &mode)
 {
    if(lastBuy<=0.0) return(false);
    if(CountOpenSide(OP_BUY)<=0 || CountOpenSide(OP_SELL)<=0) return(false);
+
    RefreshRates();
    target=NormalizePrice(Ask+PointsToPrice(FirstStep));
-   double upper=lastBuy+PointsToPrice(BuyProgression);
-   double lower=lastBuy-PointsToPrice(BuyProgression);
+
+   double upper=lastBuy+PointsToPrice(MiniGrid1);
+   double lower=lastBuy-PointsToPrice(MiniGrid1);
    double tol=PointsToPrice(BuyProgressionTolerance);
+
    if(target>=upper-tol)
    {
       mode="EXPANSION";
@@ -343,8 +302,7 @@ void EnsureNextBuyStop()
    string mode="";
    if(!BuyProgressionTrigger(lastBuy,target,mode)) return;
 
-   double lots=GetNextBuyLot();
-   if(lots<=0.0) return;
+   double lots=GetNextLot(OP_BUY);
    double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
    if(target<=Ask+stopLevel) return;
 
@@ -356,14 +314,14 @@ void EnsureNextBuyStop()
             " lastBuy=",DoubleToString(lastBuy,Digits),
             " target=",DoubleToString(target,Digits),
             " delta=",DoubleToString(target-lastBuy,Digits),
-            " lots=",DoubleToString(lots,DigitsLots));
+            " lots=",DoubleToString(lots,DigitsLots),
+            " MiniGrid1=",DoubleToString(MiniGrid1,Digits));
    }
 }
 
 // -----------------------------------------------------------------------------
-// SELL ENGINE v0.910
-// IMPORTANT: SELL STOP is below Bid. It only moves UP when Bid rises, i.e.
-// toward the market. It never moves downward when price is moving away.
+// SELL pending trailing
+// SELL STOP only moves upward toward market. It never chases falling price.
 // -----------------------------------------------------------------------------
 void TrailSellStops()
 {
@@ -380,14 +338,13 @@ void TrailSellStops()
       double trail=PointsToPrice(PendingStepTrail);
       double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
 
-      // SELL STOP moves only upward. If price falls, do NOT move it downward.
       if(desired<=current) continue;
       if((desired-current)<trail) continue;
       if(desired>=Bid-stopLevel) continue;
 
       ResetLastError();
       if(!OrderModify(OrderTicket(),desired,0,0,0,clrNONE))
-         Print(EA_NAME," SELLSTOP trail failed ticket=",OrderTicket()," current=",DoubleToString(current,Digits)," desired=",DoubleToString(desired,Digits)," error=",GetLastError());
+         Print(EA_NAME," SELLSTOP trail failed ticket=",OrderTicket()," error=",GetLastError());
       else
          Print(EA_NAME," SELLSTOP moved TOWARD price ticket=",OrderTicket()," from=",DoubleToString(current,Digits)," to=",DoubleToString(desired,Digits));
    }
@@ -405,10 +362,11 @@ void EnsureNextSellStop()
    if(Bid-lastSell<PointsToPrice(2.0*FirstStep)) return;
 
    int sellCount=CountOpenSide(OP_SELL);
-   double lots=GetNextSellLot(sellCount);
+   double lots=GetNextLot(OP_SELL);
    double target=NormalizePrice(Bid-PointsToPrice(FirstStep));
    double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
    if(target>=Bid-stopLevel) return;
+
    SendPending(OP_SELLSTOP,lots,target,"EAGOLD SELL NEXT");
 }
 
@@ -455,17 +413,20 @@ void ProcessCloseBy()
 
 void UpdateDisplay()
 {
-   string text=EA_NAME+" v0.910";
+   string text=EA_NAME+" v0.911";
    text += "\nBUY="+IntegerToString(CountOpenSide(OP_BUY));
    text += " SELL="+IntegerToString(CountOpenSide(OP_SELL));
-   text += "\nBUY LOT STATE="+DoubleToString(BuyLevelLot,DigitsLots);
+   text += "\nMiniGrid1="+DoubleToString(MiniGrid1,Digits);
+   text += " SmartGrid1="+DoubleToString(SmartGrid1,Digits);
+   text += "\nMiniGrid2="+DoubleToString(MiniGrid2,Digits);
+   text += " SmartGrid2="+DoubleToString(SmartGrid2,Digits);
    Comment(text);
 }
 
 int OnInit()
 {
    SyncBuyExecutionState();
-   Print(EA_NAME," v0.910 initialized. Pending orders now ratchet TOWARD price only.");
+   Print(EA_NAME," v0.911 initialized. MiniGrid1 is the BUY structural progression parameter.");
    return(INIT_SUCCEEDED);
 }
 
