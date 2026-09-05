@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.911"
+#property version   "0.912"
 #property description "EAGOLD - observed BUY/SELL distance engine"
 
 input int    MagicNumber       = 1001;
@@ -14,8 +14,8 @@ input double BasketLoss        = 100.00;
 input int    SpreadLimit       = 100;
 input int    WaitSeconds       = 0;
 input double FirstStep         = 160;
-input double MiniGrid1         = 240;
-input double SmartGrid1        = 150;
+input double MiniGrid1         = 250;
+input double SmartGrid1        = 80;
 input double MiniGrid2         = 80;
 input double SmartGrid2        = 60;
 input double PendingStepTrail  = 50;
@@ -28,9 +28,6 @@ datetime LastTradeTime = 0;
 datetime LastBuyOpenTime = 0;
 datetime LastBuyProgressionSource = 0;
 
-// -----------------------------------------------------------------------------
-// Utility
-// -----------------------------------------------------------------------------
 double PointsToPrice(double points)
 {
    return(points * Point);
@@ -132,9 +129,7 @@ void SyncBuyExecutionState()
       LastBuyOpenTime=t;
 }
 
-// Confirmed lot model from the observed progression:
-// L(n) = Lot * Multiplier^n + n * LotIncrement, capped by MaxOpenLot.
-// n is the number of currently open market positions on the same side.
+// Observed lot model currently under validation.
 double GetNextLot(int side)
 {
    int n=CountOpenSide(side);
@@ -185,9 +180,6 @@ void DeletePendingSide(int type)
    }
 }
 
-// -----------------------------------------------------------------------------
-// Initial engine
-// -----------------------------------------------------------------------------
 void EnsureInitialPendings()
 {
    if(CountOpenSide(OP_BUY)==0 && !HasPendingSide(OP_BUYSTOP))
@@ -202,10 +194,6 @@ void EnsureInitialPendings()
    }
 }
 
-// -----------------------------------------------------------------------------
-// BUY pending trailing
-// BUY STOP only moves downward toward market. It never chases rising price.
-// -----------------------------------------------------------------------------
 void TrailBuyStops()
 {
    for(int i=OrdersTotal()-1;i>=0;i--)
@@ -260,8 +248,6 @@ void ProcessBuyTakeProfit()
    }
 }
 
-// MiniGrid1 is now the observed structural BUY progression parameter.
-// The tolerance remains explicit because the source EA operates on live ticks.
 bool BuyProgressionTrigger(double lastBuy,double &target,string &mode)
 {
    if(lastBuy<=0.0) return(false);
@@ -319,10 +305,6 @@ void EnsureNextBuyStop()
    }
 }
 
-// -----------------------------------------------------------------------------
-// SELL pending trailing
-// SELL STOP only moves upward toward market. It never chases falling price.
-// -----------------------------------------------------------------------------
 void TrailSellStops()
 {
    for(int i=OrdersTotal()-1;i>=0;i--)
@@ -361,7 +343,6 @@ void EnsureNextSellStop()
    RefreshRates();
    if(Bid-lastSell<PointsToPrice(2.0*FirstStep)) return;
 
-   int sellCount=CountOpenSide(OP_SELL);
    double lots=GetNextLot(OP_SELL);
    double target=NormalizePrice(Bid-PointsToPrice(FirstStep));
    double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
@@ -403,9 +384,6 @@ void ProcessSellProfit()
    }
 }
 
-// -----------------------------------------------------------------------------
-// CloseBy framework reserved for later reconstruction.
-// -----------------------------------------------------------------------------
 void ProcessCloseBy()
 {
    if(!EnableCloseBy) return;
@@ -413,7 +391,7 @@ void ProcessCloseBy()
 
 void UpdateDisplay()
 {
-   string text=EA_NAME+" v0.911";
+   string text=EA_NAME+" v0.912";
    text += "\nBUY="+IntegerToString(CountOpenSide(OP_BUY));
    text += " SELL="+IntegerToString(CountOpenSide(OP_SELL));
    text += "\nMiniGrid1="+DoubleToString(MiniGrid1,Digits);
@@ -426,7 +404,7 @@ void UpdateDisplay()
 int OnInit()
 {
    SyncBuyExecutionState();
-   Print(EA_NAME," v0.911 initialized. MiniGrid1 is the BUY structural progression parameter.");
+   Print(EA_NAME," v0.912 initialized. Test configuration: FirstStep=160 MiniGrid1=250 SmartGrid1=80 MiniGrid2=80 SmartGrid2=60 PendingStepTrail=50.");
    return(INIT_SUCCEEDED);
 }
 
