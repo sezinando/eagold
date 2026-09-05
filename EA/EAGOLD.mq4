@@ -3,8 +3,8 @@
 //|                         EAGOLD - Expert Advisor for MT4          |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "000.602"
-#property description "EAGOLD - Trailing, SELL mini-grid, basket, average price and K_lot progression."
+#property version   "000.603"
+#property description "EAGOLD - Trailing, SELL mini-grid, basket, average price, K_lot and exposure panel."
 
 input int    MagicNumber       = 1001;
 input double Lots              = 0.01;
@@ -16,24 +16,18 @@ input double ProfitTargetPrice = 1.0;
 input double BasketTotal       = 5.0;
 input int    Slippage          = 10;
 
-// Cores utilizadas pelo indicador visual de preço médio.
 color AvgBuyColor  = clrBlue;
 color AvgSellColor = clrRed;
 
-string AvgBuyLineName  = "EAGOLD_AVG_BUY_LINE";
-string AvgSellLineName = "EAGOLD_AVG_SELL_LINE";
-string AvgBuyTextName  = "EAGOLD_AVG_BUY_TEXT";
-string AvgSellTextName = "EAGOLD_AVG_SELL_TEXT";
-
-//====================================================================
-// FILTROS DE ORDENS
-//====================================================================
+string AvgBuyLineName   = "EAGOLD_AVG_BUY_LINE";
+string AvgSellLineName  = "EAGOLD_AVG_SELL_LINE";
+string AvgBuyTextName   = "EAGOLD_AVG_BUY_TEXT";
+string AvgSellTextName  = "EAGOLD_AVG_SELL_TEXT";
+string PanelName        = "EAGOLD_EXPOSURE_PANEL";
 
 bool IsEAGOLDOrder()
 {
-   if(OrderSymbol() != Symbol()) return(false);
-   if(OrderMagicNumber() != MagicNumber) return(false);
-   return(true);
+   return(OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber);
 }
 
 bool IsOpenPosition()
@@ -51,34 +45,24 @@ bool IsPendingOrder()
 int CountOpenOrders()
 {
    int count = 0;
-
-   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   for(int i = OrdersTotal()-1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(!IsEAGOLDOrder()) continue;
-      if(IsOpenPosition()) count++;
+      if(IsEAGOLDOrder() && IsOpenPosition()) count++;
    }
-
    return(count);
 }
 
 int CountPendingOrders()
 {
    int count = 0;
-
-   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   for(int i = OrdersTotal()-1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(!IsEAGOLDOrder()) continue;
-      if(IsPendingOrder()) count++;
+      if(IsEAGOLDOrder() && IsPendingOrder()) count++;
    }
-
    return(count);
 }
-
-//====================================================================
-// UTILITÁRIOS
-//====================================================================
 
 double PointsToPrice(int points)
 {
@@ -90,15 +74,11 @@ double NormalizeLot(double lots)
    double minLot  = MarketInfo(Symbol(), MODE_MINLOT);
    double maxLot  = MarketInfo(Symbol(), MODE_MAXLOT);
    double lotStep = MarketInfo(Symbol(), MODE_LOTSTEP);
-
    if(lotStep <= 0.0) lotStep = 0.01;
    if(lots < minLot) lots = minLot;
    if(lots > maxLot) lots = maxLot;
-
-   lots = MathFloor(lots / lotStep + 0.0000001) * lotStep;
+   lots = MathRound(lots / lotStep) * lotStep;
    if(lots < minLot) lots = minLot;
-
-   // Mantém precisão suficiente para brokers com lot step de 0.001.
    return(NormalizeDouble(lots, 3));
 }
 
@@ -110,91 +90,55 @@ double NextLot(double currentLots)
 
 double PositionProfitPrice()
 {
-   if(OrderType() == OP_BUY)
-      return(Bid - OrderOpenPrice());
-
-   if(OrderType() == OP_SELL)
-      return(OrderOpenPrice() - Ask);
-
+   if(OrderType() == OP_BUY)  return(Bid - OrderOpenPrice());
+   if(OrderType() == OP_SELL) return(OrderOpenPrice() - Ask);
    return(0.0);
 }
-
-//====================================================================
-// PREÇO MÉDIO POR LADO
-//====================================================================
 
 bool GetSideAverage(int side, double &averagePrice, double &totalLots)
 {
    double weightedPrice = 0.0;
    totalLots = 0.0;
-
-   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   for(int i = OrdersTotal()-1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(!IsEAGOLDOrder()) continue;
-      if(OrderType() != side) continue;
-
-      double lots = OrderLots();
-      weightedPrice += OrderOpenPrice() * lots;
-      totalLots += lots;
+      if(!IsEAGOLDOrder() || OrderType() != side) continue;
+      weightedPrice += OrderOpenPrice() * OrderLots();
+      totalLots += OrderLots();
    }
-
    if(totalLots <= 0.0)
    {
       averagePrice = 0.0;
       return(false);
    }
-
    averagePrice = NormalizeDouble(weightedPrice / totalLots, Digits);
    return(true);
 }
 
-void DeleteAverageObject(string objectName)
+void DeleteObjectIfExists(string name)
 {
-   if(ObjectFind(0, objectName) >= 0)
-      ObjectDelete(0, objectName);
+   if(ObjectFind(0, name) >= 0) ObjectDelete(0, name);
 }
 
-void DrawAverageLine(string lineName,
-                     string textName,
-                     double averagePrice,
-                     color lineColor,
-                     string sideText)
+void DrawAverageLine(string lineName, string textName, double averagePrice,
+                     color lineColor, string sideText)
 {
    if(ObjectFind(0, lineName) < 0)
    {
-      if(!ObjectCreate(0, lineName, OBJ_HLINE, 0, 0, averagePrice))
-      {
-         Print("EAGOLD ERROR - Could not create average line. Name=", lineName,
-               " Error=", GetLastError());
-         return;
-      }
+      if(!ObjectCreate(0, lineName, OBJ_HLINE, 0, 0, averagePrice)) return;
    }
-
    ObjectSetDouble(0, lineName, OBJPROP_PRICE1, averagePrice);
    ObjectSetInteger(0, lineName, OBJPROP_COLOR, lineColor);
    ObjectSetInteger(0, lineName, OBJPROP_STYLE, STYLE_DASH);
    ObjectSetInteger(0, lineName, OBJPROP_WIDTH, 1);
-   ObjectSetInteger(0, lineName, OBJPROP_BACK, false);
    ObjectSetInteger(0, lineName, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, lineName, OBJPROP_SELECTED, false);
    ObjectSetString(0, lineName, OBJPROP_TOOLTIP,
-                   sideText + " AVG " + DoubleToString(averagePrice, Digits));
+                   sideText + " " + DoubleToString(averagePrice, Digits));
 
-   datetime textTime = TimeCurrent();
-   if(Bars > 0)
-      textTime = Time[0];
-
+   datetime textTime = (Bars > 0 ? Time[0] : TimeCurrent());
    if(ObjectFind(0, textName) < 0)
-   {
-      if(!ObjectCreate(0, textName, OBJ_TEXT, 0, textTime, averagePrice))
-      {
-         Print("EAGOLD ERROR - Could not create average text. Name=", textName,
-               " Error=", GetLastError());
-         return;
-      }
-   }
-
+      ObjectCreate(0, textName, OBJ_TEXT, 0, textTime, averagePrice);
    ObjectMove(0, textName, 0, textTime, averagePrice);
    ObjectSetString(0, textName, OBJPROP_TEXT,
                    sideText + " " + DoubleToString(averagePrice, Digits));
@@ -202,52 +146,93 @@ void DrawAverageLine(string lineName,
    ObjectSetInteger(0, textName, OBJPROP_FONTSIZE, 8);
    ObjectSetInteger(0, textName, OBJPROP_COLOR, lineColor);
    ObjectSetInteger(0, textName, OBJPROP_ANCHOR, ANCHOR_LEFT);
-   ObjectSetInteger(0, textName, OBJPROP_BACK, false);
    ObjectSetInteger(0, textName, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, textName, OBJPROP_SELECTED, false);
 }
 
 void UpdateAveragePriceDisplay()
 {
-   double buyAverage;
-   double buyLots;
-   double sellAverage;
-   double sellLots;
+   double buyAvg, buyLots, sellAvg, sellLots;
+   bool hasBuy  = GetSideAverage(OP_BUY, buyAvg, buyLots);
+   bool hasSell = GetSideAverage(OP_SELL, sellAvg, sellLots);
 
-   bool hasBuy  = GetSideAverage(OP_BUY, buyAverage, buyLots);
-   bool hasSell = GetSideAverage(OP_SELL, sellAverage, sellLots);
+   if(hasBuy) DrawAverageLine(AvgBuyLineName, AvgBuyTextName, buyAvg, AvgBuyColor, "BUY AVG");
+   else { DeleteObjectIfExists(AvgBuyLineName); DeleteObjectIfExists(AvgBuyTextName); }
 
-   if(hasBuy)
-   {
-      DrawAverageLine(AvgBuyLineName, AvgBuyTextName,
-                      buyAverage, AvgBuyColor, "BUY AVG");
-   }
-   else
-   {
-      DeleteAverageObject(AvgBuyLineName);
-      DeleteAverageObject(AvgBuyTextName);
-   }
-
-   if(hasSell)
-   {
-      DrawAverageLine(AvgSellLineName, AvgSellTextName,
-                      sellAverage, AvgSellColor, "SELL AVG");
-   }
-   else
-   {
-      DeleteAverageObject(AvgSellLineName);
-      DeleteAverageObject(AvgSellTextName);
-   }
-
-   ChartRedraw();
+   if(hasSell) DrawAverageLine(AvgSellLineName, AvgSellTextName, sellAvg, AvgSellColor, "SELL AVG");
+   else { DeleteObjectIfExists(AvgSellLineName); DeleteObjectIfExists(AvgSellTextName); }
 }
 
 void DeleteAveragePriceDisplay()
 {
-   DeleteAverageObject(AvgBuyLineName);
-   DeleteAverageObject(AvgSellLineName);
-   DeleteAverageObject(AvgBuyTextName);
-   DeleteAverageObject(AvgSellTextName);
+   DeleteObjectIfExists(AvgBuyLineName);
+   DeleteObjectIfExists(AvgSellLineName);
+   DeleteObjectIfExists(AvgBuyTextName);
+   DeleteObjectIfExists(AvgSellTextName);
+}
+
+//====================================================================
+// EXPOSIÇÃO E SALDO POR LADO
+//====================================================================
+
+void GetSideExposure(int side, double &lots, double &pnl)
+{
+   lots = 0.0;
+   pnl = 0.0;
+   for(int i = OrdersTotal()-1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder() || OrderType() != side) continue;
+      lots += OrderLots();
+      pnl += OrderProfit() + OrderSwap() + OrderCommission();
+   }
+}
+
+void GetTotalExposure(double &lots, double &pnl)
+{
+   double buyLots, buyPnl, sellLots, sellPnl;
+   GetSideExposure(OP_BUY, buyLots, buyPnl);
+   GetSideExposure(OP_SELL, sellLots, sellPnl);
+   lots = buyLots + sellLots;
+   pnl = buyPnl + sellPnl;
+}
+
+void CreateOrUpdatePanel()
+{
+   if(ObjectFind(0, PanelName) < 0)
+   {
+      if(!ObjectCreate(0, PanelName, OBJ_LABEL, 0, 0, 0))
+      {
+         Print("EAGOLD ERROR - Could not create exposure panel. Error=", GetLastError());
+         return;
+      }
+   }
+
+   double buyLots, buyPnl, sellLots, sellPnl, totalLots, totalPnl;
+   GetSideExposure(OP_BUY, buyLots, buyPnl);
+   GetSideExposure(OP_SELL, sellLots, sellPnl);
+   GetTotalExposure(totalLots, totalPnl);
+
+   string text =
+      "EAGOLD\n" +
+      "--------------------------------\n" +
+      "BUY   Exposure: " + DoubleToString(buyLots, 3) + "  P/L: " + DoubleToString(buyPnl, 2) + "\n" +
+      "SELL  Exposure: " + DoubleToString(sellLots, 3) + "  P/L: " + DoubleToString(sellPnl, 2) + "\n" +
+      "--------------------------------\n" +
+      "TOTAL Exposure: " + DoubleToString(totalLots, 3) + "  P/L: " + DoubleToString(totalPnl, 2) + "\n" +
+      "Balance: " + DoubleToString(AccountBalance(), 2) +
+      "  Equity: " + DoubleToString(AccountEquity(), 2);
+
+   ObjectSetString(0, PanelName, OBJPROP_TEXT, text);
+   ObjectSetString(0, PanelName, OBJPROP_FONT, "Consolas");
+   ObjectSetInteger(0, PanelName, OBJPROP_FONTSIZE, 9);
+   ObjectSetInteger(0, PanelName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, PanelName, OBJPROP_XDISTANCE, 10);
+   ObjectSetInteger(0, PanelName, OBJPROP_YDISTANCE, 20);
+   ObjectSetInteger(0, PanelName, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, PanelName, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, PanelName, OBJPROP_SELECTED, false);
+   ObjectSetInteger(0, PanelName, OBJPROP_BACK, false);
 }
 
 //====================================================================
@@ -257,128 +242,91 @@ void DeleteAveragePriceDisplay()
 double BasketProfit()
 {
    double total = 0.0;
-
-   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   for(int i = OrdersTotal()-1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(!IsEAGOLDOrder()) continue;
-      if(!IsOpenPosition()) continue;
-
+      if(!IsEAGOLDOrder() || !IsOpenPosition()) continue;
       total += OrderProfit() + OrderSwap() + OrderCommission();
    }
-
    return(total);
 }
 
 void CloseBasket()
 {
    RefreshRates();
-
-   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   for(int i = OrdersTotal()-1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(!IsEAGOLDOrder()) continue;
-      if(!IsOpenPosition()) continue;
-
+      if(!IsEAGOLDOrder() || !IsOpenPosition()) continue;
       int ticket = OrderTicket();
       int type = OrderType();
       double lots = OrderLots();
-      double price = (type == OP_BUY) ? Bid : Ask;
-
+      double price = (type == OP_BUY ? Bid : Ask);
       ResetLastError();
-
       if(!OrderClose(ticket, lots, price, Slippage, clrNONE))
-      {
-         Print("EAGOLD ERROR - Basket close failed. Ticket=", ticket,
-               " Error=", GetLastError());
-      }
+         Print("EAGOLD ERROR - Basket close failed. Ticket=", ticket, " Error=", GetLastError());
    }
-
-   for(int j = OrdersTotal() - 1; j >= 0; j--)
+   for(int j = OrdersTotal()-1; j >= 0; j--)
    {
       if(!OrderSelect(j, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(!IsEAGOLDOrder()) continue;
-      if(!IsPendingOrder()) continue;
-
-      int pendingTicket = OrderTicket();
+      if(!IsEAGOLDOrder() || !IsPendingOrder()) continue;
+      int ticket2 = OrderTicket();
       ResetLastError();
-
-      if(!OrderDelete(pendingTicket))
-      {
-         Print("EAGOLD ERROR - Basket pending delete failed. Ticket=",
-               pendingTicket, " Error=", GetLastError());
-      }
+      if(!OrderDelete(ticket2))
+         Print("EAGOLD ERROR - Pending delete failed. Ticket=", ticket2, " Error=", GetLastError());
    }
-
    UpdateAveragePriceDisplay();
-
-   Print("EAGOLD - BASKET CLOSED. BasketProfit reached ",
-         DoubleToString(BasketTotal, 2));
 }
 
 bool CheckBasket()
 {
    if(BasketTotal <= 0.0) return(false);
-
    double basket = BasketProfit();
-
    if(basket >= BasketTotal)
    {
-      Print("EAGOLD - Basket target reached. Current=",
-            DoubleToString(basket, 2),
-            " Target=", DoubleToString(BasketTotal, 2));
+      Print("EAGOLD - Basket target reached. Current=", DoubleToString(basket,2),
+            " Target=", DoubleToString(BasketTotal,2));
       CloseBasket();
       return(true);
    }
-
    return(false);
 }
 
 //====================================================================
-// OPERAÇÃO INDEPENDENTE
+// OPERAÇÃO
 //====================================================================
 
 bool StartIndependentOperation(int direction, double operationLots)
 {
    RefreshRates();
-
    operationLots = NormalizeLot(operationLots);
 
-   int marketType;
-   int pendingType;
-   double marketPrice;
-   double pendingPrice;
+   int marketType, pendingType;
+   double marketPrice, pendingPrice;
 
    if(direction == OP_BUY)
    {
-      marketType   = OP_BUY;
-      pendingType  = OP_SELLSTOP;
-      marketPrice  = NormalizeDouble(Ask, Digits);
+      marketType = OP_BUY;
+      pendingType = OP_SELLSTOP;
+      marketPrice = NormalizeDouble(Ask, Digits);
       pendingPrice = NormalizeDouble(marketPrice - PointsToPrice(FirstStep), Digits);
    }
    else if(direction == OP_SELL)
    {
-      marketType   = OP_SELL;
-      pendingType  = OP_BUYSTOP;
-      marketPrice  = NormalizeDouble(Bid, Digits);
+      marketType = OP_SELL;
+      pendingType = OP_BUYSTOP;
+      marketPrice = NormalizeDouble(Bid, Digits);
       pendingPrice = NormalizeDouble(marketPrice + PointsToPrice(FirstStep), Digits);
    }
-   else
-      return(false);
+   else return(false);
 
    ResetLastError();
-
-   int marketTicket = OrderSend(
-      Symbol(), marketType, operationLots, marketPrice, Slippage,
-      0, 0,
-      direction == OP_BUY ? "EAGOLD BUY" : "EAGOLD SELL",
-      MagicNumber, 0, clrNONE
-   );
-
+   int marketTicket = OrderSend(Symbol(), marketType, operationLots, marketPrice, Slippage,
+                                0, 0, direction == OP_BUY ? "EAGOLD BUY" : "EAGOLD SELL",
+                                MagicNumber, 0, clrNONE);
    if(marketTicket < 0)
    {
-      Print("EAGOLD ERROR - Market order failed. Direction=",
-            direction == OP_BUY ? "BUY" : "SELL",
+      Print("EAGOLD ERROR - Market order failed. Direction=", direction == OP_BUY ? "BUY" : "SELL",
             " Error=", GetLastError());
       return(false);
    }
@@ -386,111 +334,67 @@ bool StartIndependentOperation(int direction, double operationLots)
    if(OrderSelect(marketTicket, SELECT_BY_TICKET))
    {
       marketPrice = OrderOpenPrice();
-
-      if(direction == OP_BUY)
-         pendingPrice = NormalizeDouble(marketPrice - PointsToPrice(FirstStep), Digits);
-      else
-         pendingPrice = NormalizeDouble(marketPrice + PointsToPrice(FirstStep), Digits);
+      if(direction == OP_BUY) pendingPrice = NormalizeDouble(marketPrice - PointsToPrice(FirstStep), Digits);
+      else pendingPrice = NormalizeDouble(marketPrice + PointsToPrice(FirstStep), Digits);
    }
 
    RefreshRates();
-
-   double minimumDistance = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
-
-   if(direction == OP_BUY && (Bid - pendingPrice) < minimumDistance)
+   double minDistance = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
+   if(direction == OP_BUY && Bid - pendingPrice < minDistance)
    {
-      Print("EAGOLD WARNING - SELL STOP could not be created because it is too close. MarketTicket=",
-            marketTicket);
+      Print("EAGOLD WARNING - SELL STOP too close. Ticket=", marketTicket);
       UpdateAveragePriceDisplay();
       return(true);
    }
-
-   if(direction == OP_SELL && (pendingPrice - Ask) < minimumDistance)
+   if(direction == OP_SELL && pendingPrice - Ask < minDistance)
    {
-      Print("EAGOLD WARNING - BUY STOP could not be created because it is too close. MarketTicket=",
-            marketTicket);
+      Print("EAGOLD WARNING - BUY STOP too close. Ticket=", marketTicket);
       UpdateAveragePriceDisplay();
       return(true);
    }
 
    ResetLastError();
-
-   int pendingTicket = OrderSend(
-      Symbol(), pendingType, operationLots, pendingPrice, Slippage,
-      0, 0,
-      direction == OP_BUY ? "EAGOLD SELL" : "EAGOLD BUY",
-      MagicNumber, 0, clrNONE
-   );
-
+   int pendingTicket = OrderSend(Symbol(), pendingType, operationLots, pendingPrice, Slippage,
+                                 0, 0, direction == OP_BUY ? "EAGOLD SELL" : "EAGOLD BUY",
+                                 MagicNumber, 0, clrNONE);
    if(pendingTicket < 0)
    {
-      Print("EAGOLD ERROR - Opposite pending order failed. MarketTicket=",
-            marketTicket,
-            " Price=", DoubleToString(pendingPrice, Digits),
+      Print("EAGOLD ERROR - Opposite pending failed. MarketTicket=", marketTicket,
             " Error=", GetLastError());
-      UpdateAveragePriceDisplay();
-      return(true);
    }
-
-   Print("EAGOLD - Independent operation started. Direction=",
-         direction == OP_BUY ? "BUY" : "SELL",
-         " MarketTicket=", marketTicket,
-         " Lots=", DoubleToString(operationLots, 3),
-         " MarketPrice=", DoubleToString(marketPrice, Digits),
-         " PendingTicket=", pendingTicket,
-         " PendingPrice=", DoubleToString(pendingPrice, Digits),
-         " FirstStep=", FirstStep);
-
    UpdateAveragePriceDisplay();
    return(true);
 }
 
 //====================================================================
-// TRAILING DAS SELL STOPS
+// TRAILING SELL STOP
 //====================================================================
 
 void TrailSellStops()
 {
-   RefreshRates();
-
-   double trailingDistance = PointsToPrice(TrailingStep);
-   double minimumDistance  = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
-
    if(TrailingStep <= 0) return;
+   RefreshRates();
+   double distance = PointsToPrice(TrailingStep);
+   double minDistance = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
 
-   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   for(int i = OrdersTotal()-1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(!IsEAGOLDOrder()) continue;
-      if(OrderType() != OP_SELLSTOP) continue;
+      if(!IsEAGOLDOrder() || OrderType() != OP_SELLSTOP) continue;
 
-      double desiredPrice = NormalizeDouble(Bid - trailingDistance, Digits);
-
-      if(desiredPrice > Bid - minimumDistance)
-         desiredPrice = NormalizeDouble(Bid - minimumDistance, Digits);
-
-      if(desiredPrice <= OrderOpenPrice() + Point / 2.0)
-         continue;
+      double desired = NormalizeDouble(Bid - distance, Digits);
+      if(desired > Bid - minDistance) desired = NormalizeDouble(Bid - minDistance, Digits);
+      if(desired <= OrderOpenPrice() + Point/2.0) continue;
 
       int ticket = OrderTicket();
-      double currentPrice = OrderOpenPrice();
-
+      double oldPrice = OrderOpenPrice();
       ResetLastError();
-
-      if(!OrderModify(ticket, desiredPrice, 0, 0, 0, clrNONE))
-      {
-         Print("EAGOLD ERROR - SELL STOP trailing failed. Ticket=", ticket,
-               " Current=", DoubleToString(currentPrice, Digits),
-               " Desired=", DoubleToString(desiredPrice, Digits),
-               " Error=", GetLastError());
-      }
+      if(!OrderModify(ticket, desired, 0, 0, 0, clrNONE))
+         Print("EAGOLD ERROR - SELL STOP trailing failed. Ticket=", ticket, " Error=", GetLastError());
       else
-      {
          Print("EAGOLD - SELL STOP trailed. Ticket=", ticket,
-               " Old=", DoubleToString(currentPrice, Digits),
-               " New=", DoubleToString(desiredPrice, Digits),
-               " TrailingStep=", TrailingStep);
-      }
+               " Old=", DoubleToString(oldPrice,Digits),
+               " New=", DoubleToString(desired,Digits));
    }
 }
 
@@ -503,13 +407,10 @@ bool GetHighestSell(double &highestPrice, double &highestLot)
    bool found = false;
    highestPrice = 0.0;
    highestLot = Lots;
-
-   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   for(int i = OrdersTotal()-1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(!IsEAGOLDOrder()) continue;
-      if(OrderType() != OP_SELL) continue;
-
+      if(!IsEAGOLDOrder() || OrderType() != OP_SELL) continue;
       if(!found || OrderOpenPrice() > highestPrice)
       {
          found = true;
@@ -517,56 +418,33 @@ bool GetHighestSell(double &highestPrice, double &highestLot)
          highestLot = OrderLots();
       }
    }
-
    return(found);
 }
 
 void ManageSellMiniGrid()
 {
    if(MiniGrid1 <= 0) return;
-
    RefreshRates();
+   double highestPrice, highestLot;
+   if(!GetHighestSell(highestPrice, highestLot)) return;
 
-   double highestSellPrice;
-   double highestSellLot;
+   double nextLevel = NormalizeDouble(highestPrice + PointsToPrice(MiniGrid1), Digits);
+   if(Ask < nextLevel) return;
 
-   if(!GetHighestSell(highestSellPrice, highestSellLot))
-      return;
-
-   double nextLevel = NormalizeDouble(
-      highestSellPrice + PointsToPrice(MiniGrid1), Digits
-   );
-
-   if(Ask < nextLevel)
-      return;
-
-   double nextLot = NextLot(highestSellLot);
-   double price   = NormalizeDouble(Bid, Digits);
-
+   double nextLot = NextLot(highestLot);
+   double price = NormalizeDouble(Bid, Digits);
    ResetLastError();
-
-   int ticket = OrderSend(
-      Symbol(), OP_SELL, nextLot, price, Slippage,
-      0, 0,
-      "EAGOLD SELL GRID",
-      MagicNumber, 0, clrNONE
-   );
-
+   int ticket = OrderSend(Symbol(), OP_SELL, nextLot, price, Slippage, 0, 0,
+                          "EAGOLD SELL GRID", MagicNumber, 0, clrNONE);
    if(ticket < 0)
    {
-      Print("EAGOLD ERROR - SELL MiniGrid order failed. Level=",
-            DoubleToString(nextLevel, Digits),
-            " Lots=", DoubleToString(nextLot, 3),
-            " Error=", GetLastError());
+      Print("EAGOLD ERROR - SELL MiniGrid failed. Level=", DoubleToString(nextLevel,Digits),
+            " Lots=", DoubleToString(nextLot,3), " Error=", GetLastError());
       return;
    }
-
-   Print("EAGOLD - SELL MiniGrid order opened. Ticket=", ticket,
-         " Price=", DoubleToString(price, Digits),
-         " Lots=", DoubleToString(nextLot, 3),
-         " MiniGrid1=", MiniGrid1,
-         " K_lot=", DoubleToString(K_lot, 2));
-
+   Print("EAGOLD - SELL MiniGrid opened. Ticket=", ticket,
+         " Price=", DoubleToString(price,Digits),
+         " Lots=", DoubleToString(nextLot,3));
    UpdateAveragePriceDisplay();
 }
 
@@ -577,102 +455,86 @@ void ManageSellMiniGrid()
 void ManageIndividualTargets()
 {
    RefreshRates();
-
-   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   for(int i = OrdersTotal()-1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(!IsEAGOLDOrder()) continue;
-      if(!IsOpenPosition()) continue;
+      if(!IsEAGOLDOrder() || !IsOpenPosition()) continue;
 
       double profitPrice = PositionProfitPrice();
-
-      if(profitPrice < ProfitTargetPrice)
-         continue;
+      if(profitPrice < ProfitTargetPrice) continue;
 
       int ticket = OrderTicket();
       int direction = OrderType();
-      double closedLots = OrderLots();
-      double closePrice = (direction == OP_BUY) ? Bid : Ask;
-
+      double lots = OrderLots();
+      double closePrice = (direction == OP_BUY ? Bid : Ask);
       ResetLastError();
-
-      bool closed = OrderClose(ticket, closedLots, closePrice, Slippage, clrNONE);
-
-      if(!closed)
+      if(!OrderClose(ticket, lots, closePrice, Slippage, clrNONE))
       {
-         Print("EAGOLD ERROR - OrderClose failed. Ticket=", ticket,
-               " Error=", GetLastError());
+         Print("EAGOLD ERROR - OrderClose failed. Ticket=", ticket, " Error=", GetLastError());
          continue;
       }
 
       Print("EAGOLD - Individual Take reached. Ticket=", ticket,
             " Direction=", direction == OP_BUY ? "BUY" : "SELL",
-            " ProfitPrice=", DoubleToString(profitPrice, 2),
-            " Target=", DoubleToString(ProfitTargetPrice, 2),
-            " ClosedLots=", DoubleToString(closedLots, 3));
+            " ProfitPrice=", DoubleToString(profitPrice,2));
 
-      // A sucessora respeita obrigatoriamente o K_lot.
-      // Ex.: 0.010 -> 0.013 -> 0.017 -> 0.022...
-      // A quantidade final continua limitada pelo LOTSTEP do broker.
-      double successorLots = NextLot(closedLots);
-
+      // A nova BUY somente nasce após a BUY anterior ter sido fechada.
+      // O lote da sucessora respeita K_lot.
       if(direction == OP_BUY)
       {
-         StartIndependentOperation(OP_BUY, successorLots);
+         StartIndependentOperation(OP_BUY, NextLot(lots));
       }
       else
       {
-         StartIndependentOperation(OP_SELL, successorLots);
+         UpdateAveragePriceDisplay();
       }
    }
 }
 
 //====================================================================
-// INIT
+// INIT / DEINIT / TICK
 //====================================================================
 
 int OnInit()
 {
    DeleteAveragePriceDisplay();
+   DeleteObjectIfExists(PanelName);
 
    Print("==================================================");
-   Print("EAGOLD v0.6.2 INITIALIZED");
-   Print("Trailing + SELL MiniGrid + K_lot + Basket + AVG PRICE");
+   Print("EAGOLD v0.6.3 INITIALIZED");
+   Print("Trailing + SELL MiniGrid + K_lot + Basket + AVG + EXPOSURE");
    Print("FirstStep         = ", FirstStep, " points");
    Print("TrailingStep      = ", TrailingStep, " points");
    Print("MiniGrid1         = ", MiniGrid1, " points");
-   Print("K_lot             = ", DoubleToString(K_lot, 2));
-   Print("ProfitTargetPrice = ", DoubleToString(ProfitTargetPrice, 2));
-   Print("BasketTotal       = ", DoubleToString(BasketTotal, 2));
+   Print("K_lot             = ", DoubleToString(K_lot,2));
+   Print("ProfitTargetPrice = ", DoubleToString(ProfitTargetPrice,2));
+   Print("BasketTotal       = ", DoubleToString(BasketTotal,2));
    Print("MagicNumber       = ", MagicNumber);
-   Print("Lots              = ", DoubleToString(Lots, 3));
+   Print("Lots              = ", DoubleToString(Lots,3));
    Print("==================================================");
 
    UpdateAveragePriceDisplay();
+   CreateOrUpdatePanel();
    return(INIT_SUCCEEDED);
 }
 
 void OnDeinit(const int reason)
 {
    DeleteAveragePriceDisplay();
-   Print("EAGOLD v0.6.2 DEINITIALIZED. Reason=", reason);
+   DeleteObjectIfExists(PanelName);
+   Print("EAGOLD v0.6.3 DEINITIALIZED. Reason=", reason);
 }
-
-//====================================================================
-// TICK
-//====================================================================
 
 void OnTick()
 {
-   if(CheckBasket())
-      return;
+   if(CheckBasket()) return;
 
    TrailSellStops();
    ManageSellMiniGrid();
    ManageIndividualTargets();
    UpdateAveragePriceDisplay();
+   CreateOrUpdatePanel();
 
-   // Primeira operação: somente quando não existe nenhuma ordem EAGOLD.
    if(CountOpenOrders() == 0 && CountPendingOrders() == 0)
       StartIndependentOperation(OP_BUY, Lots);
 }
