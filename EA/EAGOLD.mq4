@@ -3,15 +3,15 @@
 //|                         EAGOLD - Expert Advisor for MT4          |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "000.601"
-#property description "EAGOLD - Trailing, SELL mini-grid, basket and weighted average price display."
+#property version   "000.602"
+#property description "EAGOLD - Trailing, SELL mini-grid, basket, average price and K_lot progression."
 
 input int    MagicNumber       = 1001;
 input double Lots              = 0.01;
 input int    FirstStep         = 150;
 input int    TrailingStep      = 100;
 input int    MiniGrid1         = 240;
-input double K_lot             = 1.10;
+input double K_lot             = 1.30;
 input double ProfitTargetPrice = 1.0;
 input double BasketTotal       = 5.0;
 input int    Slippage          = 10;
@@ -98,7 +98,8 @@ double NormalizeLot(double lots)
    lots = MathFloor(lots / lotStep + 0.0000001) * lotStep;
    if(lots < minLot) lots = minLot;
 
-   return(NormalizeDouble(lots, 2));
+   // Mantém precisão suficiente para brokers com lot step de 0.001.
+   return(NormalizeDouble(lots, 3));
 }
 
 double NextLot(double currentLots)
@@ -120,16 +121,6 @@ double PositionProfitPrice()
 
 //====================================================================
 // PREÇO MÉDIO POR LADO
-//====================================================================
-//
-// Calcula o preço médio ponderado pelo lote das posições abertas
-// EAGOLD do mesmo lado.
-//
-// BUY AVG  = SUM(PreçoAbertura x Lote) / SUM(Lote)
-// SELL AVG = SUM(PreçoAbertura x Lote) / SUM(Lote)
-//
-// Ordens pendentes não participam do cálculo, pois ainda não possuem
-// posição executada.
 //====================================================================
 
 bool GetSideAverage(int side, double &averagePrice, double &totalLots)
@@ -190,7 +181,6 @@ void DrawAverageLine(string lineName,
    ObjectSetString(0, lineName, OBJPROP_TOOLTIP,
                    sideText + " AVG " + DoubleToString(averagePrice, Digits));
 
-   // Texto acompanha o preço médio próximo à última barra.
    datetime textTime = TimeCurrent();
    if(Bars > 0)
       textTime = Time[0];
@@ -445,7 +435,7 @@ bool StartIndependentOperation(int direction, double operationLots)
    Print("EAGOLD - Independent operation started. Direction=",
          direction == OP_BUY ? "BUY" : "SELL",
          " MarketTicket=", marketTicket,
-         " Lots=", DoubleToString(operationLots, 2),
+         " Lots=", DoubleToString(operationLots, 3),
          " MarketPrice=", DoubleToString(marketPrice, Digits),
          " PendingTicket=", pendingTicket,
          " PendingPrice=", DoubleToString(pendingPrice, Digits),
@@ -566,14 +556,14 @@ void ManageSellMiniGrid()
    {
       Print("EAGOLD ERROR - SELL MiniGrid order failed. Level=",
             DoubleToString(nextLevel, Digits),
-            " Lots=", DoubleToString(nextLot, 2),
+            " Lots=", DoubleToString(nextLot, 3),
             " Error=", GetLastError());
       return;
    }
 
    Print("EAGOLD - SELL MiniGrid order opened. Ticket=", ticket,
          " Price=", DoubleToString(price, Digits),
-         " Lots=", DoubleToString(nextLot, 2),
+         " Lots=", DoubleToString(nextLot, 3),
          " MiniGrid1=", MiniGrid1,
          " K_lot=", DoubleToString(K_lot, 2));
 
@@ -601,12 +591,12 @@ void ManageIndividualTargets()
 
       int ticket = OrderTicket();
       int direction = OrderType();
-      double lots = OrderLots();
+      double closedLots = OrderLots();
       double closePrice = (direction == OP_BUY) ? Bid : Ask;
 
       ResetLastError();
 
-      bool closed = OrderClose(ticket, lots, closePrice, Slippage, clrNONE);
+      bool closed = OrderClose(ticket, closedLots, closePrice, Slippage, clrNONE);
 
       if(!closed)
       {
@@ -618,15 +608,21 @@ void ManageIndividualTargets()
       Print("EAGOLD - Individual Take reached. Ticket=", ticket,
             " Direction=", direction == OP_BUY ? "BUY" : "SELL",
             " ProfitPrice=", DoubleToString(profitPrice, 2),
-            " Target=", DoubleToString(ProfitTargetPrice, 2));
+            " Target=", DoubleToString(ProfitTargetPrice, 2),
+            " ClosedLots=", DoubleToString(closedLots, 3));
+
+      // A sucessora respeita obrigatoriamente o K_lot.
+      // Ex.: 0.010 -> 0.013 -> 0.017 -> 0.022...
+      // A quantidade final continua limitada pelo LOTSTEP do broker.
+      double successorLots = NextLot(closedLots);
 
       if(direction == OP_BUY)
       {
-         StartIndependentOperation(OP_BUY, Lots);
+         StartIndependentOperation(OP_BUY, successorLots);
       }
       else
       {
-         UpdateAveragePriceDisplay();
+         StartIndependentOperation(OP_SELL, successorLots);
       }
    }
 }
@@ -640,7 +636,7 @@ int OnInit()
    DeleteAveragePriceDisplay();
 
    Print("==================================================");
-   Print("EAGOLD v0.6.1 INITIALIZED");
+   Print("EAGOLD v0.6.2 INITIALIZED");
    Print("Trailing + SELL MiniGrid + K_lot + Basket + AVG PRICE");
    Print("FirstStep         = ", FirstStep, " points");
    Print("TrailingStep      = ", TrailingStep, " points");
@@ -649,7 +645,7 @@ int OnInit()
    Print("ProfitTargetPrice = ", DoubleToString(ProfitTargetPrice, 2));
    Print("BasketTotal       = ", DoubleToString(BasketTotal, 2));
    Print("MagicNumber       = ", MagicNumber);
-   Print("Lots              = ", DoubleToString(Lots, 2));
+   Print("Lots              = ", DoubleToString(Lots, 3));
    Print("==================================================");
 
    UpdateAveragePriceDisplay();
@@ -659,7 +655,7 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    DeleteAveragePriceDisplay();
-   Print("EAGOLD v0.6.1 DEINITIALIZED. Reason=", reason);
+   Print("EAGOLD v0.6.2 DEINITIALIZED. Reason=", reason);
 }
 
 //====================================================================
