@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.009"
+#property version   "0.010"
 #property description "EAGOLD - FirstStep, directional trailing, BUY TP and SELL progression trigger fix"
 
 input int    MagicNumber              = 1001;
@@ -141,8 +141,8 @@ void TrailSellStop()
 {
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
-      if(!IsEAGOLDOrder() || OrderType() != OP_SELLSTOP) continue;
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder() || OrderType() != OP_SELLSTOP) continue;
       if(OrderComment() != "EAGOLD FIRST STEP SELL") continue;
 
       RefreshRates();
@@ -211,12 +211,13 @@ void ProcessBuyTakeProfit()
 }
 
 // Return the most recently activated SELL.
-// Ticket number is used as the tie-breaker when several SELLs are opened
-// within the same second, which is common in fast backtests.
+// Open time is the primary criterion. Ticket is the tie-breaker when multiple
+// SELLs are opened within the same second, which can happen in fast backtests.
 bool GetLatestSell(double &latestSellOpen, int &latestSellTicket)
 {
    latestSellOpen   = 0.0;
    latestSellTicket = -1;
+   datetime latestSellTime = 0;
    bool foundSell = false;
 
    for(int i = OrdersTotal() - 1; i >= 0; i--)
@@ -224,27 +225,21 @@ bool GetLatestSell(double &latestSellOpen, int &latestSellTicket)
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType() != OP_SELL) continue;
 
+      datetime openTime = OrderOpenTime();
       int ticket = OrderTicket();
 
       if(!foundSell ||
-         OrderOpenTime() > OrderOpenTimeOfTicket(latestSellTicket) ||
-         (OrderOpenTime() == OrderOpenTimeOfTicket(latestSellTicket) && ticket > latestSellTicket))
+         openTime > latestSellTime ||
+         (openTime == latestSellTime && ticket > latestSellTicket))
       {
          foundSell = true;
+         latestSellTime = openTime;
          latestSellOpen = OrderOpenPrice();
          latestSellTicket = ticket;
       }
    }
 
    return(foundSell);
-}
-
-// Helper used only to compare SELL open times safely.
-datetime OrderOpenTimeOfTicket(int ticket)
-{
-   if(ticket < 0) return(0);
-   if(!OrderSelect(ticket, SELECT_BY_TICKET, MODE_TRADES)) return(0);
-   return(OrderOpenTime());
 }
 
 // SELL PROGRESSION:
@@ -304,7 +299,7 @@ void ProcessSellProgression()
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.009 initialized. FirstStep=", DoubleToString(FirstStep, 0),
+   Print(EA_NAME, " v0.010 initialized. FirstStep=", DoubleToString(FirstStep, 0),
          " PendingStepTrail=", DoubleToString(PendingStepTrail, 0),
          " TakeProfit=", DoubleToString(TakeProfit, 2),
          " SmartGrid1=", DoubleToString(SmartGrid1, 0),
