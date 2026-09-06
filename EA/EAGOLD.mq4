@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.066"
+#property version   "0.067"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 8"
 
 input int    MagicNumber              = 1001;
@@ -221,8 +221,8 @@ void SellRecovery()
    SendPending(OP_SELLSTOP,newStop,nextLot,"EAGOLD SELL RECOVERY");
 }
 
-// RULE 6 - TRAILING OF ALL STOP ORDERS EXCEPT THE R1 FIRST STOP.
-// Every non-R1 STOP follows the favorable market direction.
+// RULE 6 - TRAILING OF ORDINARY STOP ORDERS.
+// Applies to non-special STOPs: recovery, TP reentry and other normal pending orders.
 // SELL STOP can only move upward; BUY STOP can only move downward.
 // Trigger distance: 2 x SmartGrid1.
 // Trailing distance: RecoveryMinDistance (ZEUS MinDistance).
@@ -245,6 +245,10 @@ void TrailStopOrdersRule6()
       string comment=OrderComment();
       if(StringFind(comment,"EAGOLD R1 FIRST BUY",0)>=0) continue;
       if(StringFind(comment,"EAGOLD R1 FIRST SELL",0)>=0) continue;
+      if(StringFind(comment,"EAGOLD R7 FIRST BUY",0)>=0) continue;
+      if(StringFind(comment,"EAGOLD R7 FIRST SELL",0)>=0) continue;
+      if(StringFind(comment,"EAGOLD R7 RESTART BUY",0)>=0) continue;
+      if(StringFind(comment,"EAGOLD R7 RESTART SELL",0)>=0) continue;
 
       RefreshRates();
       double current=OrderOpenPrice();
@@ -277,26 +281,42 @@ void TrailStopOrdersRule6()
    }
 }
 
-void TrailR1FirstStopOrders()
+// RULE 7 - SPECIAL TRAILING OF THE FIRST STOP.
+// This rule applies to TWO situations:
+// 1) the original first BUY/SELL STOP created by Rule 1;
+// 2) the first STOP created immediately after a directional basket is closed (Rule 8).
+// These special STOPs use FirstStep as trailing distance and PendingStepTrail as
+// the minimum favorable movement. They are intentionally excluded from Rule 6.
+void TrailSpecialFirstStopOrders()
 {
    if(FirstStep<=0.0 || PendingStepTrail<=0.0) return;
    double trailDistance=PointsToPrice(FirstStep);
    double trailStep=PointsToPrice(PendingStepTrail);
    double activationDistance=trailDistance+trailStep;
    double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
+
    for(int i=OrdersTotal()-1;i>=0;i--)
    {
       if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
       if(!IsEAGOLDOrder()) continue;
       int type=OrderType();
       if(type!=OP_BUYSTOP && type!=OP_SELLSTOP) continue;
+
       string comment=OrderComment();
-      if(type==OP_BUYSTOP && StringFind(comment,"EAGOLD R1 FIRST BUY",0)<0) continue;
-      if(type==OP_SELLSTOP && StringFind(comment,"EAGOLD R1 FIRST SELL",0)<0) continue;
+      bool special=false;
+      if(StringFind(comment,"EAGOLD R1 FIRST BUY",0)>=0) special=true;
+      if(StringFind(comment,"EAGOLD R1 FIRST SELL",0)>=0) special=true;
+      if(StringFind(comment,"EAGOLD R7 FIRST BUY",0)>=0) special=true;
+      if(StringFind(comment,"EAGOLD R7 FIRST SELL",0)>=0) special=true;
+      if(StringFind(comment,"EAGOLD R7 RESTART BUY",0)>=0) special=true;
+      if(StringFind(comment,"EAGOLD R7 RESTART SELL",0)>=0) special=true;
+      if(!special) continue;
+
       RefreshRates();
       double current=OrderOpenPrice();
       double desired=current;
       double movement=0.0;
+
       if(type==OP_SELLSTOP)
       {
          double distance=Bid-current;
@@ -313,12 +333,13 @@ void TrailR1FirstStopOrders()
          movement=current-desired;
          if(movement<trailStep || desired>=current || desired<=Ask+stopLevel) continue;
       }
+
       int ticket=OrderTicket();
       ResetLastError();
       if(!OrderModify(ticket,desired,0,0,0,clrNONE))
-         Print(EA_NAME," RULE 7: R1 STOP TRAIL FAILED. ticket=",ticket," error=",GetLastError());
+         Print(EA_NAME," RULE 7: SPECIAL STOP TRAIL FAILED. ticket=",ticket," comment=",comment," error=",GetLastError());
       else
-         Print(EA_NAME," RULE 7: R1 STOP TRAIL. ticket=",ticket," from=",DoubleToString(current,Digits)," to=",DoubleToString(desired,Digits));
+         Print(EA_NAME," RULE 7: SPECIAL STOP TRAIL. ticket=",ticket," comment=",comment," from=",DoubleToString(current,Digits)," to=",DoubleToString(desired,Digits));
    }
 }
 
@@ -409,14 +430,14 @@ void RestartEmptyBasket(int direction)
    if(direction==OP_BUY)
    {
       double price=NormalizePrice(Ask+PointsToPrice(BasketRestartStep));
-      Print(EA_NAME," RULE 8: BUY basket closed and empty. Creating BUY STOP at ",DoubleToString(price,Digits));
-      SendPending(OP_BUYSTOP,price,Lot,"EAGOLD R8 BUY RESTART");
+      Print(EA_NAME," RULE 8: BUY basket closed and empty. Creating R7 special BUY STOP at ",DoubleToString(price,Digits));
+      SendPending(OP_BUYSTOP,price,Lot,"EAGOLD R7 RESTART BUY");
    }
    else
    {
       double price=NormalizePrice(Bid-PointsToPrice(BasketRestartStep));
-      Print(EA_NAME," RULE 8: SELL basket closed and empty. Creating SELL STOP at ",DoubleToString(price,Digits));
-      SendPending(OP_SELLSTOP,price,Lot,"EAGOLD R8 SELL RESTART");
+      Print(EA_NAME," RULE 8: SELL basket closed and empty. Creating R7 special SELL STOP at ",DoubleToString(price,Digits));
+      SendPending(OP_SELLSTOP,price,Lot,"EAGOLD R7 RESTART SELL");
    }
 }
 
@@ -438,7 +459,7 @@ void SellMachine()
 
 int OnInit()
 {
-   Print(EA_NAME," v0.066 initialized. R6=all non-R1 STOPs; trigger=2x SmartGrid1; trail=RecoveryMinDistance; step=PendingStepTrail.");
+   Print(EA_NAME," v0.067 initialized. R6=ordinary STOPs; R7=R1 first STOP + first STOP after basket restart; R7 trail=FirstStep; step=PendingStepTrail.");
    CreateFirstOrdersIfFlat();
    return(INIT_SUCCEEDED);
 }
@@ -449,5 +470,5 @@ void OnTick()
    SellMachine();
    CreateFirstOrdersIfFlat();
    TrailStopOrdersRule6();
-   TrailR1FirstStopOrders();
+   TrailSpecialFirstStopOrders();
 }
