@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.044"
+#property version   "0.045"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 6"
 
 input int    MagicNumber              = 1001;
@@ -70,28 +70,14 @@ int SendPending(int type, double price, double lots, string comment)
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
    price = NormalizePrice(price);
    lots = NormalizeLot(lots);
-
    if(type == OP_BUYSTOP && price <= Ask + stopLevel) return(-1);
    if(type == OP_SELLSTOP && price >= Bid - stopLevel) return(-1);
-
    ResetLastError();
-   int ticket = OrderSend(Symbol(), type, lots, price, 0, 0, 0,
-                          comment, MagicNumber, 0, clrNONE);
+   int ticket = OrderSend(Symbol(), type, lots, price, 0, 0, 0, comment, MagicNumber, 0, clrNONE);
    if(ticket < 0)
-   {
-      Print(EA_NAME, " OrderSend failed. type=", type,
-            " price=", DoubleToString(price, Digits),
-            " lot=", DoubleToString(lots, DigitsLots),
-            " comment=", comment, " error=", GetLastError());
-   }
+      Print(EA_NAME, " OrderSend failed. type=", type, " price=", DoubleToString(price, Digits), " lot=", DoubleToString(lots, DigitsLots), " comment=", comment, " error=", GetLastError());
    else
-   {
-      Print(EA_NAME, " pending created. ticket=", ticket,
-            " type=", type,
-            " price=", DoubleToString(price, Digits),
-            " lot=", DoubleToString(lots, DigitsLots),
-            " comment=", comment);
-   }
+      Print(EA_NAME, " pending created. ticket=", ticket, " type=", type, " price=", DoubleToString(price, Digits), " lot=", DoubleToString(lots, DigitsLots), " comment=", comment);
    return(ticket);
 }
 
@@ -121,8 +107,7 @@ bool CloseMarketOrder(int ticket)
    ResetLastError();
    if(!OrderClose(ticket, OrderLots(), NormalizePrice(price), 0, clrNONE))
    {
-      Print(EA_NAME, " market close failed. ticket=", ticket,
-            " type=", type, " error=", GetLastError());
+      Print(EA_NAME, " market close failed. ticket=", ticket, " type=", type, " error=", GetLastError());
       return(false);
    }
    return(true);
@@ -154,8 +139,7 @@ void SellCreateFirstOrder()
 // ============================================================
 // RULE 2 + RULE 3 - RECOVERY
 // ============================================================
-bool GetLatestActivatedPosition(int direction, double &latestPrice,
-                                double &latestLot, int &latestTicket)
+bool GetLatestActivatedPosition(int direction, double &latestPrice, double &latestLot, int &latestTicket)
 {
    int type = (direction == OP_BUY ? OP_BUY : OP_SELL);
    latestPrice = 0.0;
@@ -163,7 +147,6 @@ bool GetLatestActivatedPosition(int direction, double &latestPrice,
    latestTicket = -1;
    datetime latestTime = 0;
    bool found = false;
-
    for(int i=OrdersTotal()-1; i>=0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
@@ -182,8 +165,6 @@ bool GetLatestActivatedPosition(int direction, double &latestPrice,
    return(found);
 }
 
-// RULE 3: the next lot is derived ONLY from the last activated order
-// in the same direction. Pending orders never become the lot reference.
 double NextRecoveryLot(double previousLot)
 {
    if(previousLot <= 0.0) return(NormalizeLot(Lot));
@@ -195,30 +176,17 @@ void BuyRecovery()
    if(SmartGrid1 <= 0.0) return;
    if(CountDirectionPositions(OP_BUY) <= 0) return;
    if(CountDirectionPending(OP_BUY) > 0) return;
-
    double lastPrice=0.0, lastLot=NormalizeLot(Lot);
    int lastTicket=-1;
    if(!GetLatestActivatedPosition(OP_BUY, lastPrice, lastLot, lastTicket)) return;
-
    RefreshRates();
    double trigger = NormalizePrice(lastPrice - PointsToPrice(2.0 * SmartGrid1));
-
-   // R2: no recovery STOP exists before price moves MORE than 2x SmartGrid1.
    if(Bid >= trigger) return;
-
-   // Once R2 is authorized, place the BUY STOP at last activated BUY - 1x SmartGrid1.
    double newStop = NormalizePrice(lastPrice - PointsToPrice(SmartGrid1));
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
    if(newStop <= Ask + stopLevel) return;
-
    double nextLot = NextRecoveryLot(lastLot);
-   Print(EA_NAME, " BUY R2/R3 AUTHORIZED. lastTicket=", lastTicket,
-         " lastPrice=", DoubleToString(lastPrice, Digits),
-         " lastLot=", DoubleToString(lastLot, DigitsLots),
-         " trigger=", DoubleToString(trigger, Digits),
-         " Bid=", DoubleToString(Bid, Digits),
-         " stop=", DoubleToString(newStop, Digits),
-         " nextLot=", DoubleToString(nextLot, DigitsLots));
+   Print(EA_NAME, " BUY R2/R3 AUTHORIZED. lastTicket=", lastTicket, " lastPrice=", DoubleToString(lastPrice, Digits), " lastLot=", DoubleToString(lastLot, DigitsLots), " trigger=", DoubleToString(trigger, Digits), " Bid=", DoubleToString(Bid, Digits), " stop=", DoubleToString(newStop, Digits), " nextLot=", DoubleToString(nextLot, DigitsLots));
    SendPending(OP_BUYSTOP, newStop, nextLot, "EAGOLD BUY RECOVERY");
 }
 
@@ -227,35 +195,22 @@ void SellRecovery()
    if(SmartGrid1 <= 0.0) return;
    if(CountDirectionPositions(OP_SELL) <= 0) return;
    if(CountDirectionPending(OP_SELL) > 0) return;
-
    double lastPrice=0.0, lastLot=NormalizeLot(Lot);
    int lastTicket=-1;
    if(!GetLatestActivatedPosition(OP_SELL, lastPrice, lastLot, lastTicket)) return;
-
    RefreshRates();
    double trigger = NormalizePrice(lastPrice + PointsToPrice(2.0 * SmartGrid1));
-
-   // R2: no recovery STOP exists before price moves MORE than 2x SmartGrid1.
    if(Ask <= trigger) return;
-
-   // Once R2 is authorized, place the SELL STOP at last activated SELL + 1x SmartGrid1.
    double newStop = NormalizePrice(lastPrice + PointsToPrice(SmartGrid1));
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
    if(newStop >= Bid - stopLevel) return;
-
    double nextLot = NextRecoveryLot(lastLot);
-   Print(EA_NAME, " SELL R2/R3 AUTHORIZED. lastTicket=", lastTicket,
-         " lastPrice=", DoubleToString(lastPrice, Digits),
-         " lastLot=", DoubleToString(lastLot, DigitsLots),
-         " trigger=", DoubleToString(trigger, Digits),
-         " Ask=", DoubleToString(Ask, Digits),
-         " stop=", DoubleToString(newStop, Digits),
-         " nextLot=", DoubleToString(nextLot, DigitsLots));
+   Print(EA_NAME, " SELL R2/R3 AUTHORIZED. lastTicket=", lastTicket, " lastPrice=", DoubleToString(lastPrice, Digits), " lastLot=", DoubleToString(lastLot, DigitsLots), " trigger=", DoubleToString(trigger, Digits), " Ask=", DoubleToString(Ask, Digits), " stop=", DoubleToString(newStop, Digits), " nextLot=", DoubleToString(nextLot, DigitsLots));
    SendPending(OP_SELLSTOP, newStop, nextLot, "EAGOLD SELL RECOVERY");
 }
 
 // ============================================================
-// RULE 6 - TRAILING OF ALL STOP ORDERS
+// RULE 6 - ONLY AFTER RULE 2
 // ============================================================
 void TrailAllStopOrders()
 {
@@ -270,6 +225,14 @@ void TrailAllStopOrders()
       if(!IsEAGOLDOrder()) continue;
       int type = OrderType();
       if(type != OP_BUYSTOP && type != OP_SELLSTOP) continue;
+
+      // R6 is NOT allowed on R1 or R4 STOPs.
+      // Only a recovery STOP created by R2 is eligible for trailing.
+      string comment = OrderComment();
+      if(StringFind(comment, "EAGOLD BUY RECOVERY", 0) < 0 &&
+         StringFind(comment, "EAGOLD SELL RECOVERY", 0) < 0)
+         continue;
+
       RefreshRates();
       double current = OrderOpenPrice();
       double desired = current;
@@ -297,25 +260,15 @@ void TrailAllStopOrders()
       if(!OrderModify(ticket, desired, 0, 0, 0, clrNONE))
          Print(EA_NAME, " RULE 6: STOP TRAIL FAILED. ticket=", ticket, " error=", GetLastError());
       else
-         Print(EA_NAME, " RULE 6: STOP TRAIL. ticket=", ticket,
-               " from=", DoubleToString(current, Digits),
-               " to=", DoubleToString(desired, Digits));
+         Print(EA_NAME, " RULE 6: STOP TRAIL. ticket=", ticket, " from=", DoubleToString(current, Digits), " to=", DoubleToString(desired, Digits));
    }
 }
 
 // ============================================================
 // RULE 4 - SINGLE POSITION TAKE PROFIT + REENTRY
 // ============================================================
-void BuyCreateReentryAfterSingleTP()
-{
-   RefreshRates();
-   SendPending(OP_BUYSTOP, Ask + PointsToPrice(MiniGrid1), Lot, "EAGOLD BUY TP REENTRY");
-}
-void SellCreateReentryAfterSingleTP()
-{
-   RefreshRates();
-   SendPending(OP_SELLSTOP, Bid - PointsToPrice(MiniGrid1), Lot, "EAGOLD SELL TP REENTRY");
-}
+void BuyCreateReentryAfterSingleTP(){ RefreshRates(); SendPending(OP_BUYSTOP, Ask + PointsToPrice(MiniGrid1), Lot, "EAGOLD BUY TP REENTRY"); }
+void SellCreateReentryAfterSingleTP(){ RefreshRates(); SendPending(OP_SELLSTOP, Bid - PointsToPrice(MiniGrid1), Lot, "EAGOLD SELL TP REENTRY"); }
 
 void BuySingleTakeProfit()
 {
@@ -329,8 +282,7 @@ void BuySingleTakeProfit()
       int ticket = OrderTicket();
       if(CloseMarketOrder(ticket))
       {
-         Print(EA_NAME, " BUY RULE 4: TakeProfit reached. ticket=", ticket,
-               " profit=", DoubleToString(profit, 2));
+         Print(EA_NAME, " BUY RULE 4: TakeProfit reached. ticket=", ticket, " profit=", DoubleToString(profit, 2));
          BuyCreateReentryAfterSingleTP();
       }
       break;
@@ -349,8 +301,7 @@ void SellSingleTakeProfit()
       int ticket = OrderTicket();
       if(CloseMarketOrder(ticket))
       {
-         Print(EA_NAME, " SELL RULE 4: TakeProfit reached. ticket=", ticket,
-               " profit=", DoubleToString(profit, 2));
+         Print(EA_NAME, " SELL RULE 4: TakeProfit reached. ticket=", ticket, " profit=", DoubleToString(profit, 2));
          SellCreateReentryAfterSingleTP();
       }
       break;
@@ -379,8 +330,7 @@ void BuyBasketClose()
    if(count <= 1 || TakeProfit <= 0.0) return;
    double target = count * TakeProfit;
    if(DirectionBasketProfit(OP_BUY) < target) return;
-   Print(EA_NAME, " BUY RULE 5: basket target reached. count=", count,
-         " target=", DoubleToString(target, 2));
+   Print(EA_NAME, " BUY RULE 5: basket target reached. count=", count, " target=", DoubleToString(target, 2));
    for(int i=OrdersTotal()-1; i>=0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
@@ -396,8 +346,7 @@ void SellBasketClose()
    if(count <= 1 || TakeProfit <= 0.0) return;
    double target = count * TakeProfit;
    if(DirectionBasketProfit(OP_SELL) < target) return;
-   Print(EA_NAME, " SELL RULE 5: basket target reached. count=", count,
-         " target=", DoubleToString(target, 2));
+   Print(EA_NAME, " SELL RULE 5: basket target reached. count=", count, " target=", DoubleToString(target, 2));
    for(int i=OrdersTotal()-1; i>=0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
@@ -412,11 +361,19 @@ void SellMachine(){ SellBasketClose(); SellSingleTakeProfit(); SellRecovery(); S
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.044 initialized. R1-R6 active. Multiplier=",
-         DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
+   Print(EA_NAME, " v0.045 initialized. R6 is enabled only for R2 recovery STOPs. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
    BuyCreateFirstOrder();
    SellCreateFirstOrder();
    return(INIT_SUCCEEDED);
 }
+
 void OnDeinit(const int reason){}
-void OnTick(){ TrailAllStopOrders(); BuyMachine(); SellMachine(); }
+
+void OnTick()
+{
+   // R2/R3 machines execute first. Only after them may R6 inspect
+   // recovery STOPs created by R2 on this tick.
+   BuyMachine();
+   SellMachine();
+   TrailAllStopOrders();
+}
