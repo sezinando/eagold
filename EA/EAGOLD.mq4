@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.057"
+#property version   "0.058"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 7"
 
 input int    MagicNumber              = 1001;
@@ -145,10 +145,9 @@ void SellCreateFirstOrder()
 // ============================================================
 // RULE 2 + RULE 3 - RECOVERY
 // R2 is evaluated from the LAST ACTIVATED market position.
-// The effective adverse distance always discounts the current spread.
-// SELL: (Ask - lastPrice) - Spread > 2x SmartGrid1.
-// BUY : (lastPrice - Bid) - Spread > 2x SmartGrid1.
-// Equivalently, SELL uses Bid-lastPrice and BUY uses lastPrice-Ask.
+// Spread rule: the trigger uses the requested directional formula.
+// SELL: (Bid - lastPrice) + Spread > 2x SmartGrid1.
+// BUY : (lastPrice - Ask) + Spread > 2x SmartGrid1.
 // The Recovery STOP itself remains 1x SmartGrid1 from the last position.
 // ============================================================
 bool GetLatestActivatedPosition(int direction, double &latestPrice, double &latestLot, int &latestTicket)
@@ -208,7 +207,7 @@ void BuyRecovery()
 
    RefreshRates();
    double spread = CurrentSpreadPrice();
-   double effectiveDistance = lastPrice - Bid - spread;
+   double effectiveDistance = lastPrice - Ask + spread;
    double requiredDistance = PointsToPrice(2.0 * SmartGrid1);
 
    if(effectiveDistance <= requiredDistance) return;
@@ -217,7 +216,7 @@ void BuyRecovery()
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
    if(newStop <= Ask + stopLevel)
    {
-      Print(EA_NAME, " BUY R2: effective trigger reached but Recovery BUY STOP is invalid. lastTicket=", lastTicket,
+      Print(EA_NAME, " BUY R2: trigger reached but Recovery BUY STOP is invalid. lastTicket=", lastTicket,
             " lastPrice=", DoubleToString(lastPrice, Digits),
             " Bid=", DoubleToString(Bid, Digits),
             " Ask=", DoubleToString(Ask, Digits),
@@ -254,7 +253,7 @@ void SellRecovery()
 
    RefreshRates();
    double spread = CurrentSpreadPrice();
-   double effectiveDistance = Ask - lastPrice - spread;
+   double effectiveDistance = Bid - lastPrice + spread;
    double requiredDistance = PointsToPrice(2.0 * SmartGrid1);
 
    if(effectiveDistance <= requiredDistance) return;
@@ -263,7 +262,7 @@ void SellRecovery()
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
    if(newStop >= Bid - stopLevel)
    {
-      Print(EA_NAME, " SELL R2: effective trigger reached but Recovery SELL STOP is invalid. lastTicket=", lastTicket,
+      Print(EA_NAME, " SELL R2: trigger reached but Recovery SELL STOP is invalid. lastTicket=", lastTicket,
             " lastPrice=", DoubleToString(lastPrice, Digits),
             " Bid=", DoubleToString(Bid, Digits),
             " Ask=", DoubleToString(Ask, Digits),
@@ -378,79 +377,75 @@ void TrailR1FirstStopOrders()
       int ticket = OrderTicket();
       ResetLastError();
       if(!OrderModify(ticket, desired, 0, 0, 0, clrNONE))
-         Print(EA_NAME, " RULE 7: R1 FIRST STOP TRAIL FAILED. ticket=", ticket, " error=", GetLastError());
+         Print(EA_NAME, " RULE 7: R1 STOP TRAIL FAILED. ticket=", ticket, " error=", GetLastError());
       else
-         Print(EA_NAME, " RULE 7: R1 FIRST STOP TRAIL. ticket=", ticket, " from=", DoubleToString(current, Digits), " to=", DoubleToString(desired, Digits));
+         Print(EA_NAME, " RULE 7: R1 STOP TRAIL. ticket=", ticket, " from=", DoubleToString(current, Digits), " to=", DoubleToString(desired, Digits));
    }
 }
 
 // ============================================================
-// RULE 4 - SINGLE POSITION TAKE PROFIT + REENTRY
+// RULE 4 - SINGLE POSITION TAKE PROFIT / REENTRY
 // ============================================================
-void BuyCreateReentryAfterSingleTP(){ RefreshRates(); SendPending(OP_BUYSTOP, Ask + PointsToPrice(MiniGrid1), Lot, "EAGOLD BUY TP REENTRY"); }
-void SellCreateReentryAfterSingleTP(){ RefreshRates(); SendPending(OP_SELLSTOP, Bid - PointsToPrice(MiniGrid1), Lot, "EAGOLD SELL TP REENTRY"); }
+void BuyCreateReentryAfterSingleTP()
+{
+   RefreshRates();
+   SendPending(OP_BUYSTOP, Ask + PointsToPrice(MiniGrid1), Lot, "EAGOLD BUY TP REENTRY");
+}
+
+void SellCreateReentryAfterSingleTP()
+{
+   RefreshRates();
+   SendPending(OP_SELLSTOP, Bid - PointsToPrice(MiniGrid1), Lot, "EAGOLD SELL TP REENTRY");
+}
 
 void BuySingleTakeProfit()
 {
-   if(TakeProfit <= 0.0 || CountDirectionPositions(OP_BUY) != 1) return;
+   if(CountDirectionPositions(OP_BUY) != 1) return;
    for(int i=OrdersTotal()-1; i>=0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType() != OP_BUY) continue;
-      double profit = OrderProfit();
-      if(profit < TakeProfit) continue;
+      if(OrderProfit() < TakeProfit) continue;
       int ticket = OrderTicket();
-      if(CloseMarketOrder(ticket))
-      {
-         Print(EA_NAME, " BUY RULE 4: TakeProfit reached. ticket=", ticket, " profit=", DoubleToString(profit, 2));
-         BuyCreateReentryAfterSingleTP();
-      }
-      break;
+      if(CloseMarketOrder(ticket)) BuyCreateReentryAfterSingleTP();
+      return;
    }
 }
 
 void SellSingleTakeProfit()
 {
-   if(TakeProfit <= 0.0 || CountDirectionPositions(OP_SELL) != 1) return;
+   if(CountDirectionPositions(OP_SELL) != 1) return;
    for(int i=OrdersTotal()-1; i>=0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType() != OP_SELL) continue;
-      double profit = OrderProfit();
-      if(profit < TakeProfit) continue;
+      if(OrderProfit() < TakeProfit) continue;
       int ticket = OrderTicket();
-      if(CloseMarketOrder(ticket))
-      {
-         Print(EA_NAME, " SELL RULE 4: TakeProfit reached. ticket=", ticket, " profit=", DoubleToString(profit, 2));
-         SellCreateReentryAfterSingleTP();
-      }
-      break;
+      if(CloseMarketOrder(ticket)) SellCreateReentryAfterSingleTP();
+      return;
    }
 }
 
 // ============================================================
 // RULE 5 - BASKET CLOSE
 // ============================================================
-bool CloseAllDirectionPending(int direction)
+void CloseAllDirectionPending(int direction)
 {
    int type = (direction == OP_BUY ? OP_BUYSTOP : OP_SELLSTOP);
-   bool ok = true;
    for(int i=OrdersTotal()-1; i>=0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType() != type) continue;
-      if(!DeletePendingOrder(OrderTicket())) ok = false;
+      DeletePendingOrder(OrderTicket());
    }
-   return(ok);
 }
 
 void BuyBasketClose()
 {
    int count = CountDirectionPositions(OP_BUY);
-   if(count <= 1 || TakeProfit <= 0.0) return;
+   if(count <= 1) return;
    double target = count * TakeProfit;
    if(DirectionBasketProfit(OP_BUY) < target) return;
-   Print(EA_NAME, " BUY RULE 5: basket target reached. count=", count, " target=", DoubleToString(target, 2));
    for(int i=OrdersTotal()-1; i>=0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
@@ -463,10 +458,9 @@ void BuyBasketClose()
 void SellBasketClose()
 {
    int count = CountDirectionPositions(OP_SELL);
-   if(count <= 1 || TakeProfit <= 0.0) return;
+   if(count <= 1) return;
    double target = count * TakeProfit;
    if(DirectionBasketProfit(OP_SELL) < target) return;
-   Print(EA_NAME, " SELL RULE 5: basket target reached. count=", count, " target=", DoubleToString(target, 2));
    for(int i=OrdersTotal()-1; i>=0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
@@ -476,18 +470,32 @@ void SellBasketClose()
    CloseAllDirectionPending(OP_SELL);
 }
 
-void BuyMachine(){ BuyBasketClose(); BuySingleTakeProfit(); BuyRecovery(); BuyCreateFirstOrder(); }
-void SellMachine(){ SellBasketClose(); SellSingleTakeProfit(); SellRecovery(); SellCreateFirstOrder(); }
+// ============================================================
+// MACHINES
+// ============================================================
+void BuyMachine()
+{
+   BuyBasketClose();
+   BuySingleTakeProfit();
+   BuyRecovery();
+   BuyCreateFirstOrder();
+}
+
+void SellMachine()
+{
+   SellBasketClose();
+   SellSingleTakeProfit();
+   SellRecovery();
+   SellCreateFirstOrder();
+}
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.057 initialized. R2 additions now discount current spread; R1/R6/R7 unchanged. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
+   Print(EA_NAME, " v0.058 initialized. R1 unchanged; R2 uses directional distance plus spread; R6 unchanged; R7 unchanged. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
    BuyCreateFirstOrder();
    SellCreateFirstOrder();
    return(INIT_SUCCEEDED);
 }
-
-void OnDeinit(const int reason){}
 
 void OnTick()
 {
