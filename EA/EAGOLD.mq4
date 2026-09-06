@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.064"
+#property version   "0.065"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 8"
 
 input int    MagicNumber              = 1001;
@@ -36,7 +36,6 @@ double NormalizeLot(double lot)
    return(NormalizeDouble(lot, DigitsLots));
 }
 bool IsEAGOLDOrder(){ return(OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber); }
-double CurrentSpreadPrice(){ RefreshRates(); return(Ask - Bid); }
 
 int CountOrdersByType(int type)
 {
@@ -50,7 +49,7 @@ int CountOrdersByType(int type)
    return(count);
 }
 int CountDirectionPositions(int direction){ return(CountOrdersByType(direction==OP_BUY?OP_BUY:OP_SELL)); }
-int CountDirectionPending(int direction){ return(CountOrdersByType(direction==OP_BUY?OP_BUYSTOP:OP_SELLSTOP)); }
+int CountDirectionPending(int direction){ return(CountOrdersByType(direction==OP_BUY?OP_BUYSTOP:OP_SELLSTOP); }
 int CountEAGOLDOrders()
 {
    int count=0;
@@ -137,17 +136,6 @@ bool CloseMarketOrder(int ticket)
    return(true);
 }
 
-// ============================================================
-// RULE 1 - FIRST STOP ORDERS / CYCLE INITIALIZATION
-// The initial ZEUS observation shows a BUY STOP and a SELL STOP
-// created together when the system is completely flat. However,
-// BUY and SELL are independent machines after that initialization.
-// A missing direction is NOT recreated merely because the opposite
-// direction remains active. This allows a valid state such as:
-//   BUY positions > 0 and SELL positions = 0
-// The initial pair is only created again when the entire EAGOLD
-// system is completely flat.
-// ============================================================
 void CreateFirstOrdersIfFlat()
 {
    if(CountEAGOLDOrders()!=0) return;
@@ -155,19 +143,9 @@ void CreateFirstOrdersIfFlat()
    int buyTicket=SendPending(OP_BUYSTOP,Ask+PointsToPrice(FirstStep),Lot,"EAGOLD R1 FIRST BUY");
    int sellTicket=SendPending(OP_SELLSTOP,Bid-PointsToPrice(FirstStep),Lot,"EAGOLD R1 FIRST SELL");
    if(buyTicket>0 || sellTicket>0)
-      Print(EA_NAME," RULE 1: initial independent BUY/SELL machine seeds created. BUY ticket=",buyTicket," SELL ticket=",sellTicket);
+      Print(EA_NAME," RULE 1: initial BUY/SELL seeds created. BUY ticket=",buyTicket," SELL ticket=",sellTicket);
 }
 
-// ============================================================
-// RULE 2 + RULE 3 - RECOVERY
-// R2 confirmed from ZEUS SELL-side history/ticks:
-//   distance = current Bid - last activated SELL price
-//   trigger when distance >= 2 x SmartGrid1
-//   recovery SELL STOP = current Bid - RecoveryMinDistance
-// BUY is the directional mirror pending independent BUY-side confirmation.
-// RecoveryMinDistance corresponds to ZEUS MinDistance; latest controlled
-// ZEUS test used MinDistance=110. No explicit spread subtraction is used.
-// ============================================================
 bool GetLatestActivatedPosition(int direction,double &latestPrice,double &latestLot,int &latestTicket)
 {
    int type=(direction==OP_BUY?OP_BUY:OP_SELL);
@@ -184,11 +162,7 @@ bool GetLatestActivatedPosition(int direction,double &latestPrice,double &latest
       int ticket=OrderTicket();
       if(!found || t>latestTime || (t==latestTime && ticket>latestTicket))
       {
-         found=true;
-         latestTime=t;
-         latestPrice=OrderOpenPrice();
-         latestLot=OrderLots();
-         latestTicket=ticket;
+         found=true; latestTime=t; latestPrice=OrderOpenPrice(); latestLot=OrderLots(); latestTicket=ticket;
       }
    }
    return(found);
@@ -216,8 +190,7 @@ double NextRecoveryLot(double previousLot)
 void BuyRecovery()
 {
    if(SmartGrid1<=0.0 || RecoveryMinDistance<=0.0) return;
-   if(CountDirectionPositions(OP_BUY)<=0) return;
-   if(HasRecoveryPending(OP_BUY)) return;
+   if(CountDirectionPositions(OP_BUY)<=0 || HasRecoveryPending(OP_BUY)) return;
    double lastPrice=0.0,lastLot=NormalizeLot(Lot); int lastTicket=-1;
    if(!GetLatestActivatedPosition(OP_BUY,lastPrice,lastLot,lastTicket)) return;
    RefreshRates();
@@ -228,20 +201,13 @@ void BuyRecovery()
    double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
    if(newStop<=Ask+stopLevel) return;
    double nextLot=NextRecoveryLot(lastLot);
-   Print(EA_NAME," BUY R2/R3 AUTHORIZED. lastTicket=",lastTicket,
-         " lastPrice=",DoubleToString(lastPrice,Digits)," lastLot=",DoubleToString(lastLot,DigitsLots),
-         " Bid=",DoubleToString(Bid,Digits)," Ask=",DoubleToString(Ask,Digits),
-         " distance=",DoubleToString(distance,Digits)," required=",DoubleToString(requiredDistance,Digits),
-         " recoveryDistance=",DoubleToString(RecoveryMinDistance,Digits),
-         " stop=",DoubleToString(newStop,Digits)," nextLot=",DoubleToString(nextLot,DigitsLots));
    SendPending(OP_BUYSTOP,newStop,nextLot,"EAGOLD BUY RECOVERY");
 }
 
 void SellRecovery()
 {
    if(SmartGrid1<=0.0 || RecoveryMinDistance<=0.0) return;
-   if(CountDirectionPositions(OP_SELL)<=0) return;
-   if(HasRecoveryPending(OP_SELL)) return;
+   if(CountDirectionPositions(OP_SELL)<=0 || HasRecoveryPending(OP_SELL)) return;
    double lastPrice=0.0,lastLot=NormalizeLot(Lot); int lastTicket=-1;
    if(!GetLatestActivatedPosition(OP_SELL,lastPrice,lastLot,lastTicket)) return;
    RefreshRates();
@@ -252,28 +218,19 @@ void SellRecovery()
    double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
    if(newStop>=Bid-stopLevel) return;
    double nextLot=NextRecoveryLot(lastLot);
-   Print(EA_NAME," SELL R2/R3 AUTHORIZED. lastTicket=",lastTicket,
-         " lastPrice=",DoubleToString(lastPrice,Digits)," lastLot=",DoubleToString(lastLot,DigitsLots),
-         " Bid=",DoubleToString(Bid,Digits)," Ask=",DoubleToString(Ask,Digits),
-         " distance=",DoubleToString(distance,Digits)," required=",DoubleToString(requiredDistance,Digits),
-         " recoveryDistance=",DoubleToString(RecoveryMinDistance,Digits),
-         " stop=",DoubleToString(newStop,Digits)," nextLot=",DoubleToString(nextLot,DigitsLots));
    SendPending(OP_SELLSTOP,newStop,nextLot,"EAGOLD SELL RECOVERY");
 }
 
-// ============================================================
-// RULE 6 - RECOVERY STOP TRAILING
-// ZEUS evidence: StepTrallOrders=50 is the minimum movement; the
-// recovery STOP tracks price at MinDistance. R2 trigger remains based
-// on 2 x SmartGrid1. Thus R6 uses RecoveryMinDistance as the trailing
-// distance, not 2 x SmartGrid1.
-// ============================================================
+// R6: only recovery STOPs. Trigger at 2x SmartGrid1, then trail at
+// RecoveryMinDistance, with a minimum favorable modification of 50 points.
 void TrailRecoveryStopOrders()
 {
-   if(RecoveryMinDistance<=0.0 || PendingStepTrail<=0.0) return;
+   if(SmartGrid1<=0.0 || RecoveryMinDistance<=0.0 || PendingStepTrail<=0.0) return;
+   double triggerDistance=PointsToPrice(2.0*SmartGrid1);
    double trailDistance=PointsToPrice(RecoveryMinDistance);
    double trailStep=PointsToPrice(PendingStepTrail);
    double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
+
    for(int i=OrdersTotal()-1;i>=0;i--)
    {
       if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
@@ -281,15 +238,19 @@ void TrailRecoveryStopOrders()
       int type=OrderType();
       if(type!=OP_BUYSTOP && type!=OP_SELLSTOP) continue;
       string comment=OrderComment();
-      if(StringFind(comment,"EAGOLD BUY RECOVERY",0)<0 && StringFind(comment,"EAGOLD SELL RECOVERY",0)<0) continue;
+      bool buyRecovery=(type==OP_BUYSTOP && StringFind(comment,"EAGOLD BUY RECOVERY",0)>=0);
+      bool sellRecovery=(type==OP_SELLSTOP && StringFind(comment,"EAGOLD SELL RECOVERY",0)>=0);
+      if(!buyRecovery && !sellRecovery) continue;
+
       RefreshRates();
       double current=OrderOpenPrice();
       double desired=current;
       double movement=0.0;
+
       if(type==OP_SELLSTOP)
       {
          double distance=Bid-current;
-         if(distance<=trailDistance) continue;
+         if(distance<triggerDistance) continue;
          desired=NormalizePrice(Bid-trailDistance);
          movement=desired-current;
          if(movement<trailStep || desired<=current || desired>=Bid-stopLevel) continue;
@@ -297,11 +258,12 @@ void TrailRecoveryStopOrders()
       else
       {
          double distance=current-Ask;
-         if(distance<=trailDistance) continue;
+         if(distance<triggerDistance) continue;
          desired=NormalizePrice(Ask+trailDistance);
          movement=current-desired;
          if(movement<trailStep || desired>=current || desired<=Ask+stopLevel) continue;
       }
+
       int ticket=OrderTicket();
       ResetLastError();
       if(!OrderModify(ticket,desired,0,0,0,clrNONE))
@@ -311,9 +273,6 @@ void TrailRecoveryStopOrders()
    }
 }
 
-// ============================================================
-// RULE 7 - R1 FIRST STOP TRAILING
-// ============================================================
 void TrailR1FirstStopOrders()
 {
    if(FirstStep<=0.0 || PendingStepTrail<=0.0) return;
@@ -359,11 +318,6 @@ void TrailR1FirstStopOrders()
    }
 }
 
-// ============================================================
-// RULE 4 - SINGLE POSITION TAKE PROFIT / REENTRY
-// MiniGrid1 remains the R4 reentry distance. It is intentionally
-// separate from RecoveryMinDistance, which models ZEUS MinDistance.
-// ============================================================
 void BuyCreateReentryAfterSingleTP(){ RefreshRates(); SendPending(OP_BUYSTOP,Ask+PointsToPrice(MiniGrid1),Lot,"EAGOLD BUY TP REENTRY"); }
 void SellCreateReentryAfterSingleTP(){ RefreshRates(); SendPending(OP_SELLSTOP,Bid-PointsToPrice(MiniGrid1),Lot,"EAGOLD SELL TP REENTRY"); }
 
@@ -394,12 +348,6 @@ void SellSingleTakeProfit()
    }
 }
 
-// ============================================================
-// RULE 5 - BASKET CLOSE
-// Confirmed basket threshold: number of positions x TakeProfit.
-// Experimental hedge gate: do not realize one winning basket while
-// total floating EAGOLD profit remains negative.
-// ============================================================
 void CloseAllDirectionPending(int direction)
 {
    int type=(direction==OP_BUY?OP_BUYSTOP:OP_SELLSTOP);
@@ -411,97 +359,87 @@ void CloseAllDirectionPending(int direction)
    }
 }
 
-bool HedgeGateAllowsBasketClose()
-{
-   double total=TotalEAGOLDFloatingProfit();
-   return(total>=0.0);
-}
+bool HedgeGateAllowsBasketClose(){ return(TotalEAGOLDFloatingProfit()>=0.0); }
 
-// ============================================================
-// RULE 8 - BASKET RESTART
-// If a directional basket is completely closed, immediately create
-// a new STOP order for that same direction. The opposite machine is
-// irrelevant: a BUY basket may restart while SELL positions remain,
-// and vice versa.
-// BasketRestartStep is intentionally independent from FirstStep,
-// MiniGrid1 and RecoveryMinDistance.
-// ============================================================
-void RestartEmptyBasket(int direction)
-{
-   if(BasketRestartStep<=0.0) return;
-   if(CountDirectionPositions(direction)>0) return;
-   if(CountDirectionPending(direction)>0) return;
-
-   RefreshRates();
-   int ticket=-1;
-   if(direction==OP_BUY)
-   {
-      double price=NormalizePrice(Ask+PointsToPrice(BasketRestartStep));
-      ticket=SendPending(OP_BUYSTOP,price,Lot,"EAGOLD R8 BUY BASKET RESTART");
-   }
-   else
-   {
-      double price=NormalizePrice(Bid-PointsToPrice(BasketRestartStep));
-      ticket=SendPending(OP_SELLSTOP,price,Lot,"EAGOLD R8 SELL BASKET RESTART");
-   }
-
-   if(ticket>0)
-      Print(EA_NAME," RULE 8: empty ",direction==OP_BUY?"BUY":"SELL"," basket restarted. ticket=",ticket," step=",DoubleToString(BasketRestartStep,Digits));
-}
-
-void BuyBasketClose()
+bool BuyBasketClose()
 {
    int count=CountDirectionPositions(OP_BUY);
-   if(count<=1) return;
+   if(count<=1) return(false);
    double target=count*TakeProfit;
-   if(DirectionBasketProfit(OP_BUY)<target) return;
-   if(!HedgeGateAllowsBasketClose())
-   {
-      Print(EA_NAME," RULE 5: BUY basket target reached but hedge gate blocked close. BuyProfit=",DoubleToString(DirectionBasketProfit(OP_BUY),2)," TotalFloating=",DoubleToString(TotalEAGOLDFloatingProfit(),2));
-      return;
-   }
+   if(DirectionBasketProfit(OP_BUY)<target || !HedgeGateAllowsBasketClose()) return(false);
    for(int i=OrdersTotal()-1;i>=0;i--)
    {
       if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType()!=OP_BUY) continue;
       CloseMarketOrder(OrderTicket());
    }
+   if(CountDirectionPositions(OP_BUY)>0) return(false);
    CloseAllDirectionPending(OP_BUY);
-   RestartEmptyBasket(OP_BUY);
+   return(true);
 }
 
-void SellBasketClose()
+bool SellBasketClose()
 {
    int count=CountDirectionPositions(OP_SELL);
-   if(count<=1) return;
+   if(count<=1) return(false);
    double target=count*TakeProfit;
-   if(DirectionBasketProfit(OP_SELL)<target) return;
-   if(!HedgeGateAllowsBasketClose())
-   {
-      Print(EA_NAME," RULE 5: SELL basket target reached but hedge gate blocked close. SellProfit=",DoubleToString(DirectionBasketProfit(OP_SELL),2)," TotalFloating=",DoubleToString(TotalEAGOLDFloatingProfit(),2));
-      return;
-   }
+   if(DirectionBasketProfit(OP_SELL)<target || !HedgeGateAllowsBasketClose()) return(false);
    for(int i=OrdersTotal()-1;i>=0;i--)
    {
       if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType()!=OP_SELL) continue;
       CloseMarketOrder(OrderTicket());
    }
+   if(CountDirectionPositions(OP_SELL)>0) return(false);
    CloseAllDirectionPending(OP_SELL);
-   RestartEmptyBasket(OP_SELL);
+   return(true);
 }
 
 // ============================================================
-// MACHINES
-// BUY and SELL execute independently. Neither machine requires an
-// open market position on the opposite side to continue operating.
+// RULE 8 - AFTER A COMPLETE BASKET CLOSURE, RESTART THAT SAME SIDE
+// The opposite basket is irrelevant. The new order is a STOP using
+// the dedicated BasketRestartStep and initial Lot.
 // ============================================================
-void BuyMachine(){ BuyBasketClose(); BuySingleTakeProfit(); BuyRecovery(); }
-void SellMachine(){ SellBasketClose(); SellSingleTakeProfit(); SellRecovery(); }
+void RestartEmptyBasket(int direction)
+{
+   if(BasketRestartStep<=0.0) return;
+   if(CountDirectionPositions(direction)!=0) return;
+   if(CountDirectionPending(direction)!=0) return;
+
+   RefreshRates();
+   if(direction==OP_BUY)
+   {
+      double price=NormalizePrice(Ask+PointsToPrice(BasketRestartStep));
+      Print(EA_NAME," RULE 8: BUY basket closed and empty. Creating BUY STOP at ",DoubleToString(price,Digits));
+      SendPending(OP_BUYSTOP,price,Lot,"EAGOLD R8 BUY RESTART");
+   }
+   else
+   {
+      double price=NormalizePrice(Bid-PointsToPrice(BasketRestartStep));
+      Print(EA_NAME," RULE 8: SELL basket closed and empty. Creating SELL STOP at ",DoubleToString(price,Digits));
+      SendPending(OP_SELLSTOP,price,Lot,"EAGOLD R8 SELL RESTART");
+   }
+}
+
+void BuyMachine()
+{
+   bool basketClosed=BuyBasketClose();
+   if(basketClosed) RestartEmptyBasket(OP_BUY);
+   BuySingleTakeProfit();
+   BuyRecovery();
+}
+
+void SellMachine()
+{
+   bool basketClosed=SellBasketClose();
+   if(basketClosed) RestartEmptyBasket(OP_SELL);
+   SellSingleTakeProfit();
+   SellRecovery();
+}
 
 int OnInit()
 {
-   Print(EA_NAME," v0.064 initialized. BUY/SELL machines independent after initial seed. R2 trigger=2x SmartGrid1; RecoveryMinDistance=",DoubleToString(RecoveryMinDistance,Digits),"; R6 trail distance=RecoveryMinDistance; R5 hedge gate=TOTAL>=0; R8 BasketRestartStep=",DoubleToString(BasketRestartStep,Digits));
+   Print(EA_NAME," v0.065 initialized. R6 trigger=2x SmartGrid1; R6 trail=RecoveryMinDistance; R6 step=PendingStepTrail; R8=restart closed basket.");
    CreateFirstOrdersIfFlat();
    return(INIT_SUCCEEDED);
 }
