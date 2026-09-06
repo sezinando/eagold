@@ -1,6 +1,6 @@
 #property strict
-#property version   "0.063"
-#property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 7"
+#property version   "0.064"
+#property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 8"
 
 input int    MagicNumber              = 1001;
 input double Lot                      = 0.01;
@@ -20,6 +20,7 @@ input double RecoveryMinDistance      = 110.0;
 input double MiniGrid2                = 80.0;
 input double SmartGrid2               = 60.0;
 input double PendingStepTrail         = 50.0;
+input double BasketRestartStep        = 160.0;
 input int    MaxTrades                = 2000;
 input bool   EnableCloseBy            = false;
 input double BuyProgressionTolerance  = 10.0;
@@ -49,7 +50,7 @@ int CountOrdersByType(int type)
    return(count);
 }
 int CountDirectionPositions(int direction){ return(CountOrdersByType(direction==OP_BUY?OP_BUY:OP_SELL)); }
-int CountDirectionPending(int direction){ return(CountOrdersByType(direction==OP_BUY?OP_BUYSTOP:OP_SELLSTOP)); }
+int CountDirectionPending(int direction){ return(CountOrdersByType(direction==OP_BUY?OP_BUYSTOP:OP_SELLSTOP); }
 int CountEAGOLDOrders()
 {
    int count=0;
@@ -416,6 +417,38 @@ bool HedgeGateAllowsBasketClose()
    return(total>=0.0);
 }
 
+// ============================================================
+// RULE 8 - BASKET RESTART
+// If a directional basket is completely closed, immediately create
+// a new STOP order for that same direction. The opposite machine is
+// irrelevant: a BUY basket may restart while SELL positions remain,
+// and vice versa.
+// BasketRestartStep is intentionally independent from FirstStep,
+// MiniGrid1 and RecoveryMinDistance.
+// ============================================================
+void RestartEmptyBasket(int direction)
+{
+   if(BasketRestartStep<=0.0) return;
+   if(CountDirectionPositions(direction)>0) return;
+   if(CountDirectionPending(direction)>0) return;
+
+   RefreshRates();
+   int ticket=-1;
+   if(direction==OP_BUY)
+   {
+      double price=NormalizePrice(Ask+PointsToPrice(BasketRestartStep));
+      ticket=SendPending(OP_BUYSTOP,price,Lot,"EAGOLD R8 BUY BASKET RESTART");
+   }
+   else
+   {
+      double price=NormalizePrice(Bid-PointsToPrice(BasketRestartStep));
+      ticket=SendPending(OP_SELLSTOP,price,Lot,"EAGOLD R8 SELL BASKET RESTART");
+   }
+
+   if(ticket>0)
+      Print(EA_NAME," RULE 8: empty ",direction==OP_BUY?"BUY":"SELL"," basket restarted. ticket=",ticket," step=",DoubleToString(BasketRestartStep,Digits));
+}
+
 void BuyBasketClose()
 {
    int count=CountDirectionPositions(OP_BUY);
@@ -434,6 +467,7 @@ void BuyBasketClose()
       CloseMarketOrder(OrderTicket());
    }
    CloseAllDirectionPending(OP_BUY);
+   RestartEmptyBasket(OP_BUY);
 }
 
 void SellBasketClose()
@@ -454,6 +488,7 @@ void SellBasketClose()
       CloseMarketOrder(OrderTicket());
    }
    CloseAllDirectionPending(OP_SELL);
+   RestartEmptyBasket(OP_SELL);
 }
 
 // ============================================================
@@ -466,7 +501,7 @@ void SellMachine(){ SellBasketClose(); SellSingleTakeProfit(); SellRecovery(); }
 
 int OnInit()
 {
-   Print(EA_NAME," v0.063 initialized. BUY/SELL machines independent after initial seed. R2 trigger=2x SmartGrid1; RecoveryMinDistance=",DoubleToString(RecoveryMinDistance,Digits),"; R6 trail distance=RecoveryMinDistance; R5 hedge gate=TOTAL>=0; R1/R4/R7 preserved.");
+   Print(EA_NAME," v0.064 initialized. BUY/SELL machines independent after initial seed. R2 trigger=2x SmartGrid1; RecoveryMinDistance=",DoubleToString(RecoveryMinDistance,Digits),"; R6 trail distance=RecoveryMinDistance; R5 hedge gate=TOTAL>=0; R8 BasketRestartStep=",DoubleToString(BasketRestartStep,Digits));
    CreateFirstOrdersIfFlat();
    return(INIT_SUCCEEDED);
 }
