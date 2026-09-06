@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.062"
+#property version   "0.063"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 7"
 
 input int    MagicNumber              = 1001;
@@ -35,7 +35,6 @@ double NormalizeLot(double lot)
    return(NormalizeDouble(lot, DigitsLots));
 }
 bool IsEAGOLDOrder(){ return(OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber); }
-
 double CurrentSpreadPrice(){ RefreshRates(); return(Ask - Bid); }
 
 int CountOrdersByType(int type)
@@ -138,7 +137,15 @@ bool CloseMarketOrder(int ticket)
 }
 
 // ============================================================
-// RULE 1 - FIRST STOP ORDERS / NEW CYCLE WHEN COMPLETELY FLAT
+// RULE 1 - FIRST STOP ORDERS / CYCLE INITIALIZATION
+// The initial ZEUS observation shows a BUY STOP and a SELL STOP
+// created together when the system is completely flat. However,
+// BUY and SELL are independent machines after that initialization.
+// A missing direction is NOT recreated merely because the opposite
+// direction remains active. This allows a valid state such as:
+//   BUY positions > 0 and SELL positions = 0
+// The initial pair is only created again when the entire EAGOLD
+// system is completely flat.
 // ============================================================
 void CreateFirstOrdersIfFlat()
 {
@@ -147,7 +154,7 @@ void CreateFirstOrdersIfFlat()
    int buyTicket=SendPending(OP_BUYSTOP,Ask+PointsToPrice(FirstStep),Lot,"EAGOLD R1 FIRST BUY");
    int sellTicket=SendPending(OP_SELLSTOP,Bid-PointsToPrice(FirstStep),Lot,"EAGOLD R1 FIRST SELL");
    if(buyTicket>0 || sellTicket>0)
-      Print(EA_NAME," RULE 1: new complete cycle started. BUY ticket=",buyTicket," SELL ticket=",sellTicket);
+      Print(EA_NAME," RULE 1: initial independent BUY/SELL machine seeds created. BUY ticket=",buyTicket," SELL ticket=",sellTicket);
 }
 
 // ============================================================
@@ -354,7 +361,7 @@ void TrailR1FirstStopOrders()
 // ============================================================
 // RULE 4 - SINGLE POSITION TAKE PROFIT / REENTRY
 // MiniGrid1 remains the R4 reentry distance. It is intentionally
-// separate from RecoveryMinDistance, which now models ZEUS MinDistance.
+// separate from RecoveryMinDistance, which models ZEUS MinDistance.
 // ============================================================
 void BuyCreateReentryAfterSingleTP(){ RefreshRates(); SendPending(OP_BUYSTOP,Ask+PointsToPrice(MiniGrid1),Lot,"EAGOLD BUY TP REENTRY"); }
 void SellCreateReentryAfterSingleTP(){ RefreshRates(); SendPending(OP_SELLSTOP,Bid-PointsToPrice(MiniGrid1),Lot,"EAGOLD SELL TP REENTRY"); }
@@ -389,11 +396,8 @@ void SellSingleTakeProfit()
 // ============================================================
 // RULE 5 - BASKET CLOSE
 // Confirmed basket threshold: number of positions x TakeProfit.
-// New experimental hedge gate from ZEUS observation:
-// do not realize one winning basket while total floating EAGOLD
-// profit remains negative. This models the observed preservation of
-// hedge balance, but is explicitly a testable hypothesis, not yet
-// claimed as a fully reverse-engineered ZEUS formula.
+// Experimental hedge gate: do not realize one winning basket while
+// total floating EAGOLD profit remains negative.
 // ============================================================
 void CloseAllDirectionPending(int direction)
 {
@@ -454,13 +458,15 @@ void SellBasketClose()
 
 // ============================================================
 // MACHINES
+// BUY and SELL execute independently. Neither machine requires an
+// open market position on the opposite side to continue operating.
 // ============================================================
 void BuyMachine(){ BuyBasketClose(); BuySingleTakeProfit(); BuyRecovery(); }
 void SellMachine(){ SellBasketClose(); SellSingleTakeProfit(); SellRecovery(); }
 
 int OnInit()
 {
-   Print(EA_NAME," v0.062 initialized. R2 trigger=2x SmartGrid1; RecoveryMinDistance=",DoubleToString(RecoveryMinDistance,Digits),"; R6 trail distance=RecoveryMinDistance; R5 hedge gate=TOTAL>=0; R1/R4/R7 preserved.");
+   Print(EA_NAME," v0.063 initialized. BUY/SELL machines independent after initial seed. R2 trigger=2x SmartGrid1; RecoveryMinDistance=",DoubleToString(RecoveryMinDistance,Digits),"; R6 trail distance=RecoveryMinDistance; R5 hedge gate=TOTAL>=0; R1/R4/R7 preserved.");
    CreateFirstOrdersIfFlat();
    return(INIT_SUCCEEDED);
 }
