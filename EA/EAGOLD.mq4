@@ -1,10 +1,10 @@
 #property strict
-#property version   "0.019"
-#property description "EAGOLD - independent fixed lot progression"
+#property version   "0.020"
+#property description "EAGOLD - SmartGrid activation and SELL multiplier progression"
 
 input int    MagicNumber              = 1001;
 input double Lot                      = 0.01;
-input double Multiplier               = 1.20;
+input double Multiplier               = 1.10;
 input int    DigitsLots               = 2;
 input double LotIncrement             = 0.02;
 input double MaxOpenLot               = 3.00;
@@ -24,8 +24,6 @@ input bool   EnableCloseBy            = false;
 input double BuyProgressionTolerance  = 10.0;
 
 string EA_NAME = "EAGOLD";
-
-// Last BUY history ticket already processed by the reentry logic.
 int LastProcessedBuyCloseTicket = -1;
 
 double PointsToPrice(double points){ return(points * Point); }
@@ -38,7 +36,17 @@ double NormalizeLot(double lot)
    return(NormalizeDouble(lot, DigitsLots));
 }
 
-double NextLot(double previousLot)
+// SELL progression uses Multiplier plus LotIncrement, exactly as specified:
+// next SELL = previous SELL * Multiplier + LotIncrement, capped at MaxOpenLot.
+double NextSellLot(double previousLot)
+{
+   double next = (previousLot * Multiplier) + LotIncrement;
+   return(NormalizeLot(next));
+}
+
+// BUY progression remains fixed-increment and independent from SELL:
+// next BUY = previous BUY + LotIncrement, capped at MaxOpenLot.
+double NextBuyLot(double previousLot)
 {
    double next = previousLot + LotIncrement;
    return(NormalizeLot(next));
@@ -272,12 +280,10 @@ bool GetLatestSell(double &latestSellOpen, double &latestSellLot, int &latestSel
    return(foundSell);
 }
 
-// SELL PROGRESSION:
-// The latest activated SELL is the reference (LastSell).
-// A progression SELL STOP is created only when price reaches
-// LastSell + 2 x SmartGrid1.
-// The progression lot is the latest SELL lot + LotIncrement,
-// limited by MaxOpenLot.
+// SELL: the next SELL STOP cannot be activated before price moves
+// 2 x SmartGrid1 against the latest activated SELL.
+// The SmartGrid reference is ALWAYS the latest activated SELL.
+// Lot = previous SELL lot * Multiplier + LotIncrement, capped.
 void ProcessSellProgression()
 {
    if(SmartGrid1 <= 0.0) return;
@@ -298,11 +304,9 @@ void ProcessSellProgression()
 
    double newSellStop = triggerPrice;
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
+   if(newSellStop >= Bid - stopLevel) return;
 
-   if(newSellStop >= Bid - stopLevel)
-      return;
-
-   double nextSellLot = NextLot(latestSellLot);
+   double nextSellLot = NextSellLot(latestSellLot);
 
    Print(EA_NAME,
          " SELL PROGRESSION TRIGGERED. latestTicket=", latestSellTicket,
@@ -310,13 +314,44 @@ void ProcessSellProgression()
          " latestLot=", DoubleToString(latestSellLot, DigitsLots),
          " nextLot=", DoubleToString(nextSellLot, DigitsLots),
          " Bid=", DoubleToString(Bid, Digits),
-         " triggerDistance=", DoubleToString(2.0 * SmartGrid1, 0),
-         " triggerPrice=", DoubleToString(triggerPrice, Digits),
-         " newSELLSTOP=", DoubleToString(newSellStop, Digits));
+         " 2xSmartGrid=", DoubleToString(2.0 * SmartGrid1, 0),
+         " trigger=", DoubleToString(triggerPrice, Digits));
 
    SendPending(OP_SELLSTOP, newSellStop, nextSellLot, "EAGOLD SELL PROGRESSION");
 }
 
+bool GetLatestBuy(double &latestBuyOpen, double &latestBuyLot, int &latestBuyTicket)
+{
+   latestBuyOpen   = 0.0;
+   latestBuyLot    = NormalizeLot(Lot);
+   latestBuyTicket = -1;
+   datetime latestBuyTime = 0;
+   bool foundBuy = false;
+
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder() || OrderType() != OP_BUY) continue;
+
+      datetime openTime = OrderOpenTime();
+      int ticket = OrderTicket();
+
+      if(!foundBuy ||
+         openTime > latestBuyTime ||
+         (openTime == latestBuyTime && ticket > latestBuyTicket))
+      {
+         foundBuy = true;
+         latestBuyTime = openTime;
+         latestBuyOpen = OrderOpenPrice();
+         latestBuyLot = OrderLots();
+         latestBuyTicket = ticket;
+      }
+   }
+
+   return(foundBuy);
+}
+
+// Last BUY closure marker is retained only to prevent duplicate processing.
 void InitializeBuyCloseTracker()
 {
    datetime latestCloseTime = 0;
@@ -329,7 +364,6 @@ void InitializeBuyCloseTracker()
 
       datetime closeTime = OrderCloseTime();
       int ticket = OrderTicket();
-
       if(closeTime > latestCloseTime ||
          (closeTime == latestCloseTime && ticket > latestTicket))
       {
@@ -341,116 +375,61 @@ void InitializeBuyCloseTracker()
    LastProcessedBuyCloseTicket = latestTicket;
 }
 
-// Find the most recent BUY closure and its lot. This is the BUY engine's
-// progression reference, independent of the SELL engine.
-bool GetLatestClosedBuy(double &latestLot, int &latestTicket, datetime &latestCloseTime)
+// BUY: the next BUY STOP cannot be activated before price moves
+// 2 x SmartGrid1 against the latest activated BUY.
+// For BUY, adverse movement is downward. The pending BUY STOP is therefore
+// placed at LastBuy - 2 x SmartGrid1, once price has reached that level.
+// BUY lot progression is independent: previous BUY lot + LotIncrement.
+void ProcessBuyProgression()
 {
-   latestLot = NormalizeLot(Lot);
-   latestTicket = -1;
-   latestCloseTime = 0;
-   bool found = false;
+   if(SmartGrid1 <= 0.0) return;
+   if(CountOrders(OP_BUYSTOP) > 0) return;
 
-   for(int i = OrdersHistoryTotal() - 1; i >= 0; i--)
-   {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) continue;
-      if(!IsEAGOLDOrder() || OrderType() != OP_BUY) continue;
-      if(OrderCloseTime() <= 0) continue;
+   double latestBuyOpen = 0.0;
+   double latestBuyLot = NormalizeLot(Lot);
+   int latestBuyTicket = -1;
 
-      datetime closeTime = OrderCloseTime();
-      int ticket = OrderTicket();
-
-      if(!found ||
-         closeTime > latestCloseTime ||
-         (closeTime == latestCloseTime && ticket > latestTicket))
-      {
-         found = true;
-         latestCloseTime = closeTime;
-         latestTicket = ticket;
-         latestLot = OrderLots();
-      }
-   }
-
-   return(found);
-}
-
-// BUY REENTRY:
-// When a BUY or BUY basket is closed, immediately create one BUY STOP
-// at MiniGrid1 points above the current ASK.
-// BUY lot progression is independent from SELL:
-// next BUY lot = last closed BUY lot + LotIncrement, capped at MaxOpenLot.
-void ProcessBuyReentryAfterClose()
-{
-   if(MiniGrid1 <= 0.0) return;
-
-   int latestClosedTicket = -1;
-   datetime latestCloseTime = 0;
-   double latestClosePrice = 0.0;
-   double latestClosedBuyLot = NormalizeLot(Lot);
-   bool foundNewClose = false;
-
-   for(int i = OrdersHistoryTotal() - 1; i >= 0; i--)
-   {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) continue;
-      if(!IsEAGOLDOrder() || OrderType() != OP_BUY) continue;
-
-      int ticket = OrderTicket();
-      datetime closeTime = OrderCloseTime();
-
-      if(ticket == LastProcessedBuyCloseTicket) continue;
-      if(closeTime <= 0) continue;
-
-      if(!foundNewClose ||
-         closeTime > latestCloseTime ||
-         (closeTime == latestCloseTime && ticket > latestClosedTicket))
-      {
-         foundNewClose = true;
-         latestCloseTime = closeTime;
-         latestClosedTicket = ticket;
-         latestClosePrice = OrderClosePrice();
-         latestClosedBuyLot = OrderLots();
-      }
-   }
-
-   if(!foundNewClose) return;
-
-   LastProcessedBuyCloseTicket = latestClosedTicket;
-
-   if(CountOrders(OP_BUYSTOP) > 0)
-   {
-      Print(EA_NAME,
-            " BUY CLOSE DETECTED but BUY STOP already exists. ticket=",
-            latestClosedTicket);
-      return;
-   }
+   if(!GetLatestBuy(latestBuyOpen, latestBuyLot, latestBuyTicket)) return;
 
    RefreshRates();
-   double newBuyStop = NormalizePrice(Ask + PointsToPrice(MiniGrid1));
-   double nextBuyLot = NextLot(latestClosedBuyLot);
+
+   double triggerDistance = PointsToPrice(2.0 * SmartGrid1);
+   double triggerPrice = NormalizePrice(latestBuyOpen - triggerDistance);
+
+   // Price must have fallen 2 x SmartGrid1 against the latest BUY.
+   if(Ask > triggerPrice) return;
+
+   // A BUY STOP must be above the current ASK. If price has moved beyond
+   // the trigger, place it at the trigger only when broker rules allow it.
+   double newBuyStop = triggerPrice;
+   double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
+   if(newBuyStop <= Ask + stopLevel) return;
+
+   double nextBuyLot = NextBuyLot(latestBuyLot);
 
    Print(EA_NAME,
-         " BUY REENTRY TRIGGERED. closedTicket=", latestClosedTicket,
-         " closedPrice=", DoubleToString(latestClosePrice, Digits),
-         " previousLot=", DoubleToString(latestClosedBuyLot, DigitsLots),
+         " BUY PROGRESSION TRIGGERED. latestTicket=", latestBuyTicket,
+         " latestBuy=", DoubleToString(latestBuyOpen, Digits),
+         " latestLot=", DoubleToString(latestBuyLot, DigitsLots),
          " nextLot=", DoubleToString(nextBuyLot, DigitsLots),
          " Ask=", DoubleToString(Ask, Digits),
-         " MiniGrid1=", DoubleToString(MiniGrid1, 0),
-         " newBUYSTOP=", DoubleToString(newBuyStop, Digits));
+         " 2xSmartGrid=", DoubleToString(2.0 * SmartGrid1, 0),
+         " trigger=", DoubleToString(triggerPrice, Digits));
 
-   SendPending(OP_BUYSTOP, newBuyStop, nextBuyLot, "EAGOLD BUY REENTRY MINIGRID1");
+   SendPending(OP_BUYSTOP, newBuyStop, nextBuyLot, "EAGOLD BUY PROGRESSION");
 }
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.019 initialized. FirstStep=", DoubleToString(FirstStep, 0),
+   Print(EA_NAME, " v0.020 initialized. FirstStep=", DoubleToString(FirstStep, 0),
          " PendingStepTrail=", DoubleToString(PendingStepTrail, 0),
          " TakeProfitMoney=", DoubleToString(TakeProfit, 2),
          " SmartGrid1=", DoubleToString(SmartGrid1, 0),
-         " SELL trigger=", DoubleToString(2.0 * SmartGrid1, 0),
+         " 2xSmartGrid=", DoubleToString(2.0 * SmartGrid1, 0),
+         " Multiplier=", DoubleToString(Multiplier, 2),
+         " LotIncrement=", DoubleToString(LotIncrement, 2),
          " MiniGrid1=", DoubleToString(MiniGrid1, 0),
-         " Lot=", DoubleToString(Lot, DigitsLots),
-         " LotIncrement=", DoubleToString(LotIncrement, DigitsLots),
-         " MaxOpenLot=", DoubleToString(MaxOpenLot, DigitsLots),
-         " Multiplier=", DoubleToString(Multiplier, 2));
+         " Lot=", DoubleToString(Lot, DigitsLots));
 
    InitializeBuyCloseTracker();
    CreateFirstStepOrders();
@@ -468,5 +447,5 @@ void OnTick()
    ProcessBuyTakeProfit();
    ProcessSellTakeProfit();
    ProcessSellProgression();
-   ProcessBuyReentryAfterClose();
+   ProcessBuyProgression();
 }
