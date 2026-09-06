@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.054"
+#property version   "0.055"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 7"
 
 input int    MagicNumber              = 1001;
@@ -282,24 +282,25 @@ void TrailRecoveryStopOrders()
 // R1 SELL = "EAGOLD R1 FIRST SELL" -> SELL STOP trails UP.
 //
 // The trailing reference is the STOP's current price.
-// The STOP remains 1x SmartGrid1 from the current market price.
+// The initial reference distance is 1x FirstStep.
 // R7 is triggered when the market-to-STOP distance reaches
-// 1x SmartGrid1 + 1x PendingStepTrail.
+// 1x FirstStep + 1x PendingStepTrail on the opposite side.
 // After the trigger, the STOP is moved toward the market so that
-// its distance is restored to 1x SmartGrid1.
+// its distance is restored to 1x FirstStep.
 //
 // Example:
-// SmartGrid1=160, PendingStepTrail=50
+// FirstStep=160, PendingStepTrail=50
 // SellStop=200, market=360 -> distance=160, no trailing.
 // Market=410 -> distance=210 -> SellStop 200 becomes 250.
 // The same logic repeats for every additional 50-point movement.
 // ============================================================
 void TrailR1FirstStopOrders()
 {
-   if(SmartGrid1 <= 0.0 || PendingStepTrail <= 0.0) return;
+   if(FirstStep <= 0.0 || PendingStepTrail <= 0.0) return;
 
-   double trailDistance = PointsToPrice(SmartGrid1);
+   double trailDistance = PointsToPrice(FirstStep);
    double trailStep = PointsToPrice(PendingStepTrail);
+   double activationDistance = trailDistance + trailStep;
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
 
    for(int i=OrdersTotal()-1; i>=0; i--)
@@ -323,9 +324,9 @@ void TrailR1FirstStopOrders()
 
       if(type == OP_SELLSTOP)
       {
-         // SELL STOP trails upward when price moves upward away from it.
+         // SELL STOP: price must move upward, opposite to the order side.
          double distance = Bid - current;
-         if(distance < trailDistance + trailStep) continue;
+         if(distance < activationDistance) continue;
 
          desired = NormalizePrice(Bid - trailDistance);
          movement = desired - current;
@@ -336,9 +337,9 @@ void TrailR1FirstStopOrders()
       }
       else
       {
-         // BUY STOP trails downward when price moves downward away from it.
+         // BUY STOP: price must move downward, opposite to the order side.
          double distance = current - Ask;
-         if(distance < trailDistance + trailStep) continue;
+         if(distance < activationDistance) continue;
 
          desired = NormalizePrice(Ask + trailDistance);
          movement = current - desired;
@@ -456,7 +457,7 @@ void SellMachine(){ SellBasketClose(); SellSingleTakeProfit(); SellRecovery(); S
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.054 initialized. R1=exclusive first-order identity; R6=R2 recovery STOP trailing; R7=independent trailing of R1 FIRST STOPs by PendingStepTrail. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
+   Print(EA_NAME, " v0.055 initialized. R1=FirstStep exclusive tag; R6=R2 recovery STOP trailing; R7=R1 FIRST STOP trailing after FirstStep+PendingStepTrail in opposite direction. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
    BuyCreateFirstOrder();
    SellCreateFirstOrder();
    return(INIT_SUCCEEDED);
@@ -468,8 +469,8 @@ void OnTick()
 {
    // R2/R3/R4/R5 machines execute first.
    // R6 trails only Recovery STOPs created by R2.
-   // R7 independently trails the original R1 FIRST STOPs.
-   // R7 does not depend on any R1 activation.
+   // R7 independently trails the original R1 FIRST STOPs,
+   // without requiring any R1 activation.
    BuyMachine();
    SellMachine();
    TrailRecoveryStopOrders();
