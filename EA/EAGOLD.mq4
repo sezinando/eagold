@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.069"
+#property version   "0.070"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 9 + Backtest Panel"
 
 input int    MagicNumber              = 1001;
@@ -25,13 +25,13 @@ input int    MaxTrades                = 2000;
 input bool   EnableCloseBy            = true;
 input double BuyProgressionTolerance  = 10.0;
 
+// R9 - Multiple CloseBy Containment
+input bool   EnableR9Containment      = true;
+input double R9_MinLots               = 1.00;
+input double R9_ContainmentPercent    = 30.0;
+
 string EA_NAME = "EAGOLD";
 
-// -----------------------------------------------------------------------------
-// BACKTEST PANEL - embedded in EA, upper-right.
-// Explicit ANCHOR_RIGHT_UPPER prevents the text from being clipped by the
-// chart's price scale when the panel is attached to the right side.
-// -----------------------------------------------------------------------------
 string PANEL_PREFIX = "EAGOLD_BT_";
 double g_panelMinProfit=0.0;
 double g_panelMaxLots=0.0;
@@ -125,7 +125,7 @@ void PanelUpdate()
    if(!g_panelInitialized){g_panelMinProfit=totalProfit;g_panelMaxLots=totalLots;g_panelInitialized=true;}
    else{if(totalProfit<g_panelMinProfit)g_panelMinProfit=totalProfit;if(totalLots>g_panelMaxLots)g_panelMaxLots=totalLots;}
    int row=0;
-   PanelSet("TITLE","EAGOLD  v0.069",row++,clrWhite);
+   PanelSet("TITLE","EAGOLD  v0.070",row++,clrWhite);
    PanelSet("SEP1","==============================",row++,clrSilver);
    PanelSet("BUY",StringFormat("BUY   %3d pos   %6s lot",buyCount,PanelLots(buyLots)),row++,clrLime);
    PanelSet("BUYPL",StringFormat("P/L       %12s",PanelMoney(buyProfit)),row++,clrLime);
@@ -187,12 +187,82 @@ bool SellBasketClose(){int count=CountDirectionPositions(OP_SELL);if(count<=1)re
 void RestartEmptyBasket(int direction){if(BasketRestartStep<=0.0)return;if(CountDirectionPositions(direction)!=0)return;if(CountDirectionPending(direction)!=0)return;RefreshRates();if(direction==OP_BUY){double price=NormalizePrice(Ask+PointsToPrice(BasketRestartStep));Print(EA_NAME," RULE 8: BUY basket closed and empty. Creating R7 special BUY STOP at ",DoubleToString(price,Digits));SendPending(OP_BUYSTOP,price,Lot,"EAGOLD R7 RESTART BUY");}else{double price=NormalizePrice(Bid-PointsToPrice(BasketRestartStep));Print(EA_NAME," RULE 8: SELL basket closed and empty. Creating R7 special SELL STOP at ",DoubleToString(price,Digits));SendPending(OP_SELLSTOP,price,Lot,"EAGOLD R7 RESTART SELL");}}
 
 bool GetLargestMarketTicket(int direction,int &ticket,double &lots){int type=(direction==OP_BUY?OP_BUY:OP_SELL);ticket=-1;lots=0.0;bool found=false;for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder()||OrderType()!=type)continue;double currentLots=OrderLots();int currentTicket=OrderTicket();if(!found||currentLots>lots||(MathAbs(currentLots-lots)<0.0000001&&currentTicket>ticket)){found=true;lots=currentLots;ticket=currentTicket;}}return(found);}
-bool R9BasketTrigger(){int buyCount=CountDirectionPositions(OP_BUY);int sellCount=CountDirectionPositions(OP_SELL);if(buyCount<=0||sellCount<=0)return(false);double buyTarget=buyCount*TakeProfit;double sellTarget=sellCount*TakeProfit;double buyProfit=DirectionBasketProfit(OP_BUY);double sellProfit=DirectionBasketProfit(OP_SELL);return(buyProfit>=buyTarget||sellProfit>=sellTarget);}
-bool Rule9MultipleCloseBy(){if(!EnableCloseBy)return(false);if(!R9BasketTrigger())return(false);Print(EA_NAME," RULE 9: MULTIPLE CLOSEBY LIQUIDATION START. BUY=",CountDirectionPositions(OP_BUY)," SELL=",CountDirectionPositions(OP_SELL)," ProfitB=",DoubleToString(DirectionBasketProfit(OP_BUY),2)," ProfitS=",DoubleToString(DirectionBasketProfit(OP_SELL),2));CloseAllDirectionPending(OP_BUY);CloseAllDirectionPending(OP_SELL);int safety=0;while(CountDirectionPositions(OP_BUY)>0&&CountDirectionPositions(OP_SELL)>0&&safety<MaxTrades){int buyTicket=-1,sellTicket=-1;double buyLots=0.0,sellLots=0.0;if(!GetLargestMarketTicket(OP_BUY,buyTicket,buyLots))break;if(!GetLargestMarketTicket(OP_SELL,sellTicket,sellLots))break;ResetLastError();if(!OrderSelect(buyTicket,SELECT_BY_TICKET,MODE_TRADES))break;if(!IsEAGOLDOrder()||OrderType()!=OP_BUY)break;if(!OrderSelect(sellTicket,SELECT_BY_TICKET,MODE_TRADES))break;if(!IsEAGOLDOrder()||OrderType()!=OP_SELL)break;ResetLastError();if(!OrderCloseBy(buyTicket,sellTicket,clrNONE)){int err=GetLastError();Print(EA_NAME," RULE 9: CLOSEBY FAILED. BUY ticket=",buyTicket," lot=",DoubleToString(buyLots,DigitsLots)," SELL ticket=",sellTicket," lot=",DoubleToString(sellLots,DigitsLots)," error=",err);break;}Print(EA_NAME," RULE 9: CLOSEBY. BUY ticket=",buyTicket," lot=",DoubleToString(buyLots,DigitsLots)," SELL ticket=",sellTicket," lot=",DoubleToString(sellLots,DigitsLots));safety++;}for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder())continue;int type=OrderType();if(type==OP_BUY||type==OP_SELL)CloseMarketOrder(OrderTicket());}bool flat=(CountDirectionPositions(OP_BUY)==0&&CountDirectionPositions(OP_SELL)==0);if(flat){Print(EA_NAME," RULE 9: MULTIPLE CLOSEBY LIQUIDATION COMPLETE. MARKET FLAT.");return(true);}return(false);}
+
+bool R9BasketTrigger()
+{
+   if(!EnableR9Containment) return(false);
+   int buyCount=CountDirectionPositions(OP_BUY);
+   int sellCount=CountDirectionPositions(OP_SELL);
+   if(buyCount<=0||sellCount<=0) return(false);
+   double buyLots=0.0,sellLots=0.0;
+   for(int i=OrdersTotal()-1;i>=0;i--)
+   {
+      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder()) continue;
+      if(OrderType()==OP_BUY) buyLots+=OrderLots();
+      else if(OrderType()==OP_SELL) sellLots+=OrderLots();
+   }
+   double totalLots=buyLots+sellLots;
+   if(R9_MinLots>0.0 && totalLots<R9_MinLots) return(false);
+   double buyProfit=DirectionBasketProfit(OP_BUY);
+   double sellProfit=DirectionBasketProfit(OP_SELL);
+   double winnerProfit=MathMax(buyProfit,sellProfit);
+   double loserProfit=MathMin(buyProfit,sellProfit);
+   if(winnerProfit<=0.0 || loserProfit>=0.0) return(false);
+   if(R9_ContainmentPercent<0.0) return(false);
+   double requiredProfit=MathAbs(loserProfit)*(R9_ContainmentPercent/100.0);
+   return(winnerProfit>=requiredProfit);
+}
+
+bool Rule9MultipleCloseBy()
+{
+   if(!R9BasketTrigger()) return(false);
+   double buyProfit=DirectionBasketProfit(OP_BUY);
+   double sellProfit=DirectionBasketProfit(OP_SELL);
+   double buyLots=0.0,sellLots=0.0;
+   int buyCount=CountDirectionPositions(OP_BUY);
+   int sellCount=CountDirectionPositions(OP_SELL);
+   for(int i=OrdersTotal()-1;i>=0;i--)
+   {
+      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder()) continue;
+      if(OrderType()==OP_BUY) buyLots+=OrderLots();
+      else if(OrderType()==OP_SELL) sellLots+=OrderLots();
+   }
+   Print(EA_NAME," RULE 9: CONTAINMENT START. BUY=",buyCount," lots=",DoubleToString(buyLots,DigitsLots)," P/L=",DoubleToString(buyProfit,2)," SELL=",sellCount," lots=",DoubleToString(sellLots,DigitsLots)," P/L=",DoubleToString(sellProfit,2)," TOTAL_LOTS=",DoubleToString(buyLots+sellLots,DigitsLots)," THRESHOLD=",DoubleToString(R9_ContainmentPercent,2),"%");
+   CloseAllDirectionPending(OP_BUY);
+   CloseAllDirectionPending(OP_SELL);
+   int safety=0;
+   bool executed=false;
+   while(CountDirectionPositions(OP_BUY)>0&&CountDirectionPositions(OP_SELL)>0&&safety<MaxTrades)
+   {
+      int buyTicket=-1,sellTicket=-1;
+      double buyLargestLots=0.0,sellLargestLots=0.0;
+      if(!GetLargestMarketTicket(OP_BUY,buyTicket,buyLargestLots)) break;
+      if(!GetLargestMarketTicket(OP_SELL,sellTicket,sellLargestLots)) break;
+      ResetLastError();
+      if(!OrderCloseBy(buyTicket,sellTicket,clrNONE))
+      {
+         int err=GetLastError();
+         Print(EA_NAME," RULE 9: CLOSEBY FAILED. BUY ticket=",buyTicket," lot=",DoubleToString(buyLargestLots,DigitsLots)," SELL ticket=",sellTicket," lot=",DoubleToString(sellLargestLots,DigitsLots)," error=",err);
+         break;
+      }
+      Print(EA_NAME," RULE 9: CLOSEBY. BUY ticket=",buyTicket," lot=",DoubleToString(buyLargestLots,DigitsLots)," SELL ticket=",sellTicket," lot=",DoubleToString(sellLargestLots,DigitsLots));
+      executed=true;
+      safety++;
+   }
+   bool oneSideOnly=(CountDirectionPositions(OP_BUY)==0||CountDirectionPositions(OP_SELL)==0);
+   if(executed)
+   {
+      Print(EA_NAME," RULE 9: MULTIPLE CLOSEBY CONTAINMENT COMPLETE. BUY remaining=",CountDirectionPositions(OP_BUY)," SELL remaining=",CountDirectionPositions(OP_SELL));
+      return(oneSideOnly);
+   }
+   return(false);
+}
 
 void BuyMachine(){bool r9=Rule9MultipleCloseBy();if(r9){RestartEmptyBasket(OP_BUY);RestartEmptyBasket(OP_SELL);return;}bool basketClosed=BuyBasketClose();if(basketClosed)RestartEmptyBasket(OP_BUY);BuySingleTakeProfit();BuyRecovery();}
 void SellMachine(){bool basketClosed=SellBasketClose();if(basketClosed)RestartEmptyBasket(OP_SELL);SellSingleTakeProfit();SellRecovery();}
 
-int OnInit(){g_panelInitialized=false;g_panelMinProfit=0.0;g_panelMaxLots=0.0;PanelUpdate();Print(EA_NAME," v0.069 initialized. R6=ordinary STOPs; R7=special first/restart STOPs; R8=basket restart; R9=multiple CloseBy liquidation; panel=upper-right.");CreateFirstOrdersIfFlat();PanelUpdate();return(INIT_SUCCEEDED);}
+int OnInit(){g_panelInitialized=false;g_panelMinProfit=0.0;g_panelMaxLots=0.0;PanelUpdate();Print(EA_NAME," v0.070 initialized. R6=ordinary STOPs; R7=special first/restart STOPs; R8=basket restart; R9=multiple CloseBy containment; panel=upper-right.");CreateFirstOrdersIfFlat();PanelUpdate();return(INIT_SUCCEEDED);}
 void OnDeinit(const int reason){PanelDelete();}
 void OnTick(){BuyMachine();SellMachine();CreateFirstOrdersIfFlat();TrailStopOrdersRule6();TrailSpecialFirstStopOrders();PanelUpdate();}
