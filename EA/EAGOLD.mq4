@@ -1,6 +1,6 @@
 #property strict
-#property version   "0.045"
-#property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 6"
+#property version   "0.046"
+#property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 7"
 
 input int    MagicNumber              = 1001;
 input double Lot                      = 0.01;
@@ -11,9 +11,9 @@ input double MaxOpenLot               = 3.00;
 input double TakeProfit               = 5.00;
 input double SellProfit               = 30.00;
 input double BasketLoss               = 100.00;
-input int    SpreadLimit              = 100;
-input int    WaitSeconds              = 0;
-input double FirstStep                = 160.0;
+input int    SpreadLimit               = 100;
+input int    WaitSeconds               = 0;
+input double FirstStep                 = 160.0;
 input double MiniGrid1                = 250.0;
 input double SmartGrid1               = 80.0;
 input double MiniGrid2                = 80.0;
@@ -210,9 +210,9 @@ void SellRecovery()
 }
 
 // ============================================================
-// RULE 6 - ONLY AFTER RULE 2
+// RULE 6 - TRAILING OF RECOVERY STOP ORDERS ONLY
 // ============================================================
-void TrailAllStopOrders()
+void TrailRecoveryStopOrders()
 {
    if(SmartGrid1 <= 0.0 || PendingStepTrail <= 0.0) return;
    double trailDistance = PointsToPrice(2.0 * SmartGrid1);
@@ -226,8 +226,6 @@ void TrailAllStopOrders()
       int type = OrderType();
       if(type != OP_BUYSTOP && type != OP_SELLSTOP) continue;
 
-      // R6 is NOT allowed on R1 or R4 STOPs.
-      // Only a recovery STOP created by R2 is eligible for trailing.
       string comment = OrderComment();
       if(StringFind(comment, "EAGOLD BUY RECOVERY", 0) < 0 &&
          StringFind(comment, "EAGOLD SELL RECOVERY", 0) < 0)
@@ -261,6 +259,62 @@ void TrailAllStopOrders()
          Print(EA_NAME, " RULE 6: STOP TRAIL FAILED. ticket=", ticket, " error=", GetLastError());
       else
          Print(EA_NAME, " RULE 6: STOP TRAIL. ticket=", ticket, " from=", DoubleToString(current, Digits), " to=", DoubleToString(desired, Digits));
+   }
+}
+
+// ============================================================
+// RULE 7 - TRAILING OF R1 MARKET POSITIONS ONLY
+// ============================================================
+void TrailR1Positions()
+{
+   if(SmartGrid1 <= 0.0 || PendingStepTrail <= 0.0) return;
+   double trailDistance = PointsToPrice(2.0 * SmartGrid1);
+   double trailStep = PointsToPrice(PendingStepTrail);
+   double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
+
+   for(int i=OrdersTotal()-1; i>=0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder()) continue;
+      int type = OrderType();
+      if(type != OP_BUY && type != OP_SELL) continue;
+
+      string comment = OrderComment();
+      bool isR1 = false;
+      if(type == OP_BUY && StringFind(comment, "EAGOLD FIRST BUY", 0) >= 0) isR1 = true;
+      if(type == OP_SELL && StringFind(comment, "EAGOLD FIRST SELL", 0) >= 0) isR1 = true;
+      if(!isR1) continue;
+
+      RefreshRates();
+      double openPrice = OrderOpenPrice();
+      double currentSL = OrderStopLoss();
+      double desiredSL = currentSL;
+
+      if(type == OP_BUY)
+      {
+         if(Bid - openPrice <= trailDistance) continue;
+         desiredSL = NormalizePrice(Bid - trailDistance);
+         if(currentSL > 0.0 && desiredSL - currentSL < trailStep) continue;
+         if(desiredSL >= Bid - stopLevel) continue;
+         if(currentSL > 0.0 && desiredSL <= currentSL) continue;
+      }
+      else
+      {
+         if(openPrice - Ask <= trailDistance) continue;
+         desiredSL = NormalizePrice(Ask + trailDistance);
+         if(currentSL > 0.0 && currentSL - desiredSL < trailStep) continue;
+         if(desiredSL <= Ask + stopLevel) continue;
+         if(currentSL > 0.0 && desiredSL >= currentSL) continue;
+      }
+
+      int ticket = OrderTicket();
+      ResetLastError();
+      if(!OrderModify(ticket, openPrice, desiredSL, 0, 0, clrNONE))
+         Print(EA_NAME, " RULE 7: R1 TRAIL FAILED. ticket=", ticket, " error=", GetLastError());
+      else
+         Print(EA_NAME, " RULE 7: R1 TRAIL. ticket=", ticket,
+               " open=", DoubleToString(openPrice, Digits),
+               " sl=", DoubleToString(desiredSL, Digits));
    }
 }
 
@@ -361,7 +415,7 @@ void SellMachine(){ SellBasketClose(); SellSingleTakeProfit(); SellRecovery(); S
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.045 initialized. R6 is enabled only for R2 recovery STOPs. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
+   Print(EA_NAME, " v0.046 initialized. R6=R2 recovery STOP trailing; R7=R1 position trailing. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
    BuyCreateFirstOrder();
    SellCreateFirstOrder();
    return(INIT_SUCCEEDED);
@@ -371,9 +425,11 @@ void OnDeinit(const int reason){}
 
 void OnTick()
 {
-   // R2/R3 machines execute first. Only after them may R6 inspect
-   // recovery STOPs created by R2 on this tick.
+   // R2/R3/R4/R5 machines execute first.
+   // R6 can only trail Recovery STOPs created by R2.
+   // R7 independently trails only market positions originating from R1.
    BuyMachine();
    SellMachine();
-   TrailAllStopOrders();
+   TrailRecoveryStopOrders();
+   TrailR1Positions();
 }
