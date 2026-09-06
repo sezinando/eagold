@@ -1,6 +1,6 @@
 #property strict
-#property version   "0.020"
-#property description "EAGOLD - separate BUY and SELL engines"
+#property version   "0.030"
+#property description "EAGOLD - independent BUY and SELL state machines"
 
 input int    MagicNumber              = 1001;
 input double Lot                      = 0.01;
@@ -24,10 +24,20 @@ input bool   EnableCloseBy            = false;
 input double BuyProgressionTolerance  = 10.0;
 
 string EA_NAME = "EAGOLD";
-int LastProcessedBuyCloseTicket = -1;
 
-double PointsToPrice(double points){ return(points * Point); }
-double NormalizePrice(double price){ return(NormalizeDouble(price, Digits)); }
+// ============================================================
+// COMMON UTILITIES
+// ============================================================
+
+double PointsToPrice(double points)
+{
+   return(points * Point);
+}
+
+double NormalizePrice(double price)
+{
+   return(NormalizeDouble(price, Digits));
+}
 
 double NormalizeLot(double lot)
 {
@@ -36,22 +46,12 @@ double NormalizeLot(double lot)
    return(NormalizeDouble(lot, DigitsLots));
 }
 
-double NextBuyLot(double previousLot)
-{
-   return(NormalizeLot(previousLot + LotIncrement));
-}
-
-double NextSellLot(double previousLot)
-{
-   return(NormalizeLot((previousLot * Multiplier) + LotIncrement));
-}
-
 bool IsEAGOLDOrder()
 {
    return(OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber);
 }
 
-int CountOrders(int type)
+int CountOrdersByType(int type)
 {
    int count = 0;
    for(int i = OrdersTotal() - 1; i >= 0; i--)
@@ -66,9 +66,10 @@ int CountOrders(int type)
 int SendPending(int type, double price, double lots, string comment)
 {
    RefreshRates();
+
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
    price = NormalizePrice(price);
-   lots = NormalizeLot(lots);
+   lots  = NormalizeLot(lots);
 
    if(type == OP_BUYSTOP && price <= Ask + stopLevel) return(-1);
    if(type == OP_SELLSTOP && price >= Bid - stopLevel) return(-1);
@@ -78,39 +79,50 @@ int SendPending(int type, double price, double lots, string comment)
                           comment, MagicNumber, 0, clrNONE);
 
    if(ticket < 0)
+   {
       Print(EA_NAME, " OrderSend failed. type=", type,
             " price=", DoubleToString(price, Digits),
             " lot=", DoubleToString(lots, DigitsLots),
             " error=", GetLastError());
+   }
    else
+   {
       Print(EA_NAME, " pending created. ticket=", ticket,
             " type=", type,
             " price=", DoubleToString(price, Digits),
-            " lot=", DoubleToString(lots, DigitsLots));
+            " lot=", DoubleToString(lots, DigitsLots),
+            " comment=", comment);
+   }
 
    return(ticket);
 }
 
-void CreateFirstStepOrders()
+// ============================================================
+// BUY MACHINE
+// ============================================================
+
+int BuyLastProcessedCloseTicket = -1;
+
+// BUY lot progression is intentionally independent from SELL.
+double BuyNextLot(double previousLot)
 {
-   int total = 0;
-   for(int i = OrdersTotal() - 1; i >= 0; i--)
-   {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(IsEAGOLDOrder()) total++;
-   }
-
-   if(total > 0) return;
-
-   RefreshRates();
-   double buyPrice  = NormalizePrice(Ask + PointsToPrice(FirstStep));
-   double sellPrice = NormalizePrice(Bid - PointsToPrice(FirstStep));
-
-   SendPending(OP_BUYSTOP, buyPrice, NormalizeLot(Lot), "EAGOLD FIRST STEP BUY");
-   SendPending(OP_SELLSTOP, sellPrice, NormalizeLot(Lot), "EAGOLD FIRST STEP SELL");
+   return(NormalizeLot(previousLot + LotIncrement));
 }
 
-void TrailBuyStop()
+void BuyCreateFirstStep()
+{
+   // BUY machine looks only at BUY-side orders.
+   if(CountOrdersByType(OP_BUY) > 0) return;
+   if(CountOrdersByType(OP_BUYSTOP) > 0) return;
+
+   RefreshRates();
+   double price = NormalizePrice(Ask + PointsToPrice(FirstStep));
+
+   SendPending(OP_BUYSTOP, price, NormalizeLot(Lot),
+               "EAGOLD FIRST STEP BUY");
+}
+
+void BuyTrailPending()
 {
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
@@ -118,11 +130,13 @@ void TrailBuyStop()
       if(!IsEAGOLDOrder() || OrderType() != OP_BUYSTOP) continue;
 
       RefreshRates();
-      double desired = NormalizePrice(Ask + PointsToPrice(FirstStep));
-      double current = OrderOpenPrice();
-      double movement = current - desired;
+
+      double desired   = NormalizePrice(Ask + PointsToPrice(FirstStep));
+      double current   = OrderOpenPrice();
+      double movement  = current - desired;
       double trailStep = PointsToPrice(PendingStepTrail);
 
+      // BUY STOP only trails downward. It never moves upward.
       if(desired >= current) continue;
       if(movement < trailStep) continue;
 
@@ -131,18 +145,175 @@ void TrailBuyStop()
 
       ResetLastError();
       if(!OrderModify(OrderTicket(), desired, 0, 0, 0, clrNONE))
-         Print(EA_NAME, " BUY STOP modify failed. ticket=", OrderTicket(),
-               " current=", DoubleToString(current, Digits),
+      {
+         Print(EA_NAME, " BUY MACHINE: BUY STOP modify failed. ticket=",
+               OrderTicket(), " current=", DoubleToString(current, Digits),
                " desired=", DoubleToString(desired, Digits),
                " error=", GetLastError());
+      }
       else
-         Print(EA_NAME, " BUY STOP TRAIL DOWN. ticket=", OrderTicket(),
-               " from=", DoubleToString(current, Digits),
+      {
+         Print(EA_NAME, " BUY MACHINE: BUY STOP TRAIL DOWN. ticket=",
+               OrderTicket(), " from=", DoubleToString(current, Digits),
                " to=", DoubleToString(desired, Digits));
+      }
    }
 }
 
-void TrailSellStop()
+void BuyTakeProfit()
+{
+   if(TakeProfit <= 0.0) return;
+
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder() || OrderType() != OP_BUY) continue;
+      if(OrderComment() != "EAGOLD FIRST STEP BUY") continue;
+
+      RefreshRates();
+      double profit = OrderProfit();
+      if(profit < TakeProfit) continue;
+
+      int ticket = OrderTicket();
+      double lots = OrderLots();
+      double bid  = NormalizePrice(Bid);
+
+      ResetLastError();
+      if(!OrderClose(ticket, lots, bid, 0, clrNONE))
+      {
+         Print(EA_NAME, " BUY MACHINE: monetary TAKE PROFIT close failed. ticket=",
+               ticket, " profit=", DoubleToString(profit, 2),
+               " targetMoney=", DoubleToString(TakeProfit, 2),
+               " error=", GetLastError());
+      }
+      else
+      {
+         Print(EA_NAME, " BUY MACHINE: monetary TAKE PROFIT. ticket=",
+               ticket, " profit=", DoubleToString(profit, 2),
+               " targetMoney=", DoubleToString(TakeProfit, 2));
+      }
+   }
+}
+
+void BuyInitializeCloseTracker()
+{
+   datetime latestCloseTime = 0;
+   int latestTicket = -1;
+
+   for(int i = OrdersHistoryTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) continue;
+      if(!IsEAGOLDOrder() || OrderType() != OP_BUY) continue;
+
+      datetime closeTime = OrderCloseTime();
+      int ticket = OrderTicket();
+
+      if(closeTime > latestCloseTime ||
+         (closeTime == latestCloseTime && ticket > latestTicket))
+      {
+         latestCloseTime = closeTime;
+         latestTicket = ticket;
+      }
+   }
+
+   BuyLastProcessedCloseTicket = latestTicket;
+}
+
+void BuyReentryAfterClose()
+{
+   if(MiniGrid1 <= 0.0) return;
+
+   int latestClosedTicket = -1;
+   datetime latestCloseTime = 0;
+   double latestClosePrice = 0.0;
+   double latestClosedLot = NormalizeLot(Lot);
+   bool foundNewClose = false;
+
+   // BUY machine reads BUY history only.
+   for(int i = OrdersHistoryTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) continue;
+      if(!IsEAGOLDOrder() || OrderType() != OP_BUY) continue;
+
+      int ticket = OrderTicket();
+      datetime closeTime = OrderCloseTime();
+      if(ticket == BuyLastProcessedCloseTicket) continue;
+      if(closeTime <= 0) continue;
+
+      if(!foundNewClose || closeTime > latestCloseTime ||
+         (closeTime == latestCloseTime && ticket > latestClosedTicket))
+      {
+         foundNewClose = true;
+         latestCloseTime = closeTime;
+         latestClosedTicket = ticket;
+         latestClosePrice = OrderClosePrice();
+         latestClosedLot = OrderLots();
+      }
+   }
+
+   if(!foundNewClose) return;
+
+   BuyLastProcessedCloseTicket = latestClosedTicket;
+
+   // Preserve the already validated BUY reentry rule:
+   // after BUY/basket closure, place one BUY STOP at MiniGrid1 above ASK.
+   if(CountOrdersByType(OP_BUYSTOP) > 0)
+   {
+      Print(EA_NAME,
+            " BUY MACHINE: close detected but BUY STOP already exists. ticket=",
+            latestClosedTicket);
+      return;
+   }
+
+   RefreshRates();
+   double newBuyStop = NormalizePrice(Ask + PointsToPrice(MiniGrid1));
+   double nextLot = BuyNextLot(latestClosedLot);
+
+   Print(EA_NAME,
+         " BUY MACHINE: REENTRY. closedTicket=", latestClosedTicket,
+         " closedPrice=", DoubleToString(latestClosePrice, Digits),
+         " previousLot=", DoubleToString(latestClosedLot, DigitsLots),
+         " nextLot=", DoubleToString(nextLot, DigitsLots),
+         " Ask=", DoubleToString(Ask, Digits),
+         " MiniGrid1=", DoubleToString(MiniGrid1, 0),
+         " newBUYSTOP=", DoubleToString(newBuyStop, Digits));
+
+   SendPending(OP_BUYSTOP, newBuyStop, nextLot,
+               "EAGOLD BUY REENTRY MINIGRID1");
+}
+
+void BuyMachine()
+{
+   BuyTrailPending();
+   BuyTakeProfit();
+   BuyReentryAfterClose();
+   BuyCreateFirstStep();
+}
+
+// ============================================================
+// SELL MACHINE
+// ============================================================
+
+// SELL lot progression is intentionally independent from BUY.
+double SellNextLot(double previousLot)
+{
+   return(NormalizeLot((previousLot * Multiplier) + LotIncrement));
+}
+
+void SellCreateFirstStep()
+{
+   // SELL machine looks only at SELL-side orders.
+   if(CountOrdersByType(OP_SELL) > 0) return;
+   if(CountOrdersByType(OP_SELLSTOP) > 0) return;
+
+   RefreshRates();
+   double price = NormalizePrice(Bid - PointsToPrice(FirstStep));
+
+   SendPending(OP_SELLSTOP, price, NormalizeLot(Lot),
+               "EAGOLD FIRST STEP SELL");
+}
+
+void SellTrailPending()
 {
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
@@ -154,11 +325,13 @@ void TrailSellStop()
          comment != "EAGOLD SELL PROGRESSION") continue;
 
       RefreshRates();
-      double desired = NormalizePrice(Bid - PointsToPrice(FirstStep));
-      double current = OrderOpenPrice();
-      double movement = desired - current;
+
+      double desired   = NormalizePrice(Bid - PointsToPrice(FirstStep));
+      double current   = OrderOpenPrice();
+      double movement  = desired - current;
       double trailStep = PointsToPrice(PendingStepTrail);
 
+      // SELL STOP only trails upward. It never moves downward.
       if(desired <= current) continue;
       if(movement < trailStep) continue;
 
@@ -167,81 +340,71 @@ void TrailSellStop()
 
       ResetLastError();
       if(!OrderModify(OrderTicket(), desired, 0, 0, 0, clrNONE))
-         Print(EA_NAME, " SELL STOP modify failed. ticket=", OrderTicket(),
-               " comment=", comment,
+      {
+         Print(EA_NAME, " SELL MACHINE: SELL STOP modify failed. ticket=",
+               OrderTicket(), " comment=", comment,
                " current=", DoubleToString(current, Digits),
                " desired=", DoubleToString(desired, Digits),
                " error=", GetLastError());
+      }
       else
-         Print(EA_NAME, " SELL STOP TRAIL UP. ticket=", OrderTicket(),
-               " comment=", comment,
+      {
+         Print(EA_NAME, " SELL MACHINE: SELL STOP TRAIL UP. ticket=",
+               OrderTicket(), " comment=", comment,
                " from=", DoubleToString(current, Digits),
                " to=", DoubleToString(desired, Digits));
+      }
    }
 }
 
-void ProcessBuyTakeProfit()
+void SellTakeProfit()
 {
+   // Preserve the current monetary TP behavior for the original SELL.
    if(TakeProfit <= 0.0) return;
-   for(int i = OrdersTotal() - 1; i >= 0; i--)
-   {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(!IsEAGOLDOrder() || OrderType() != OP_BUY) continue;
-      if(OrderComment() != "EAGOLD FIRST STEP BUY") continue;
-      RefreshRates();
-      double profit = OrderProfit();
-      if(profit < TakeProfit) continue;
-      int ticket = OrderTicket();
-      double lots = OrderLots();
-      double bid = NormalizePrice(Bid);
-      ResetLastError();
-      if(!OrderClose(ticket, lots, bid, 0, clrNONE))
-         Print(EA_NAME, " INITIAL BUY MONETARY TAKE PROFIT close failed. ticket=", ticket,
-               " profit=", DoubleToString(profit, 2),
-               " targetMoney=", DoubleToString(TakeProfit, 2),
-               " error=", GetLastError());
-      else
-         Print(EA_NAME, " INITIAL BUY MONETARY TAKE PROFIT. ticket=", ticket,
-               " profit=", DoubleToString(profit, 2),
-               " targetMoney=", DoubleToString(TakeProfit, 2));
-   }
-}
 
-void ProcessSellTakeProfit()
-{
-   if(TakeProfit <= 0.0) return;
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType() != OP_SELL) continue;
       if(OrderComment() != "EAGOLD FIRST STEP SELL") continue;
+
       RefreshRates();
       double profit = OrderProfit();
       if(profit < TakeProfit) continue;
+
       int ticket = OrderTicket();
       double lots = OrderLots();
-      double ask = NormalizePrice(Ask);
+      double ask  = NormalizePrice(Ask);
+
       ResetLastError();
       if(!OrderClose(ticket, lots, ask, 0, clrNONE))
-         Print(EA_NAME, " INITIAL SELL MONETARY TAKE PROFIT close failed. ticket=", ticket,
-               " profit=", DoubleToString(profit, 2),
+      {
+         Print(EA_NAME, " SELL MACHINE: monetary TAKE PROFIT close failed. ticket=",
+               ticket, " profit=", DoubleToString(profit, 2),
                " targetMoney=", DoubleToString(TakeProfit, 2),
                " error=", GetLastError());
+      }
       else
-         Print(EA_NAME, " INITIAL SELL MONETARY TAKE PROFIT. ticket=", ticket,
-               " profit=", DoubleToString(profit, 2),
+      {
+         Print(EA_NAME, " SELL MACHINE: monetary TAKE PROFIT. ticket=",
+               ticket, " profit=", DoubleToString(profit, 2),
                " targetMoney=", DoubleToString(TakeProfit, 2));
+      }
    }
 }
 
-bool GetLatestSell(double &latestSellOpen, double &latestSellLot, int &latestSellTicket)
+bool SellGetLatestActivated(double &latestOpen,
+                            double &latestLot,
+                            int &latestTicket)
 {
-   latestSellOpen = 0.0;
-   latestSellLot = NormalizeLot(Lot);
-   latestSellTicket = -1;
-   datetime latestSellTime = 0;
-   bool foundSell = false;
+   latestOpen = 0.0;
+   latestLot = NormalizeLot(Lot);
+   latestTicket = -1;
 
+   datetime latestTime = 0;
+   bool found = false;
+
+   // SELL machine reads SELL active orders only.
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
@@ -249,143 +412,82 @@ bool GetLatestSell(double &latestSellOpen, double &latestSellLot, int &latestSel
 
       datetime openTime = OrderOpenTime();
       int ticket = OrderTicket();
-      if(!foundSell || openTime > latestSellTime ||
-         (openTime == latestSellTime && ticket > latestSellTicket))
+
+      if(!found || openTime > latestTime ||
+         (openTime == latestTime && ticket > latestTicket))
       {
-         foundSell = true;
-         latestSellTime = openTime;
-         latestSellOpen = OrderOpenPrice();
-         latestSellLot = OrderLots();
-         latestSellTicket = ticket;
+         found = true;
+         latestTime = openTime;
+         latestOpen = OrderOpenPrice();
+         latestLot = OrderLots();
+         latestTicket = ticket;
       }
    }
-   return(foundSell);
+
+   return(found);
 }
 
-// SELL ENGINE ONLY.
-// LastSell is always the most recent SELL actually activated.
-// A new SELL STOP is permitted only after price moves 2 x SmartGrid1 upward
-// against that LastSell. BUY logic is intentionally not used here.
-void ProcessSellProgression()
+void SellProgression()
 {
    if(SmartGrid1 <= 0.0) return;
-   if(CountOrders(OP_SELLSTOP) > 0) return;
 
-   double latestSellOpen = 0.0;
-   double latestSellLot = NormalizeLot(Lot);
-   int latestSellTicket = -1;
-   if(!GetLatestSell(latestSellOpen, latestSellLot, latestSellTicket)) return;
+   // Only one SELL STOP may exist at a time.
+   if(CountOrdersByType(OP_SELLSTOP) > 0) return;
+
+   double lastSellPrice = 0.0;
+   double lastSellLot = NormalizeLot(Lot);
+   int lastSellTicket = -1;
+
+   if(!SellGetLatestActivated(lastSellPrice, lastSellLot, lastSellTicket))
+      return;
 
    RefreshRates();
 
-   double triggerPrice = NormalizePrice(latestSellOpen + PointsToPrice(2.0 * SmartGrid1));
+   // SELL adverse movement is UP.
+   // New progression becomes eligible only after 2 x SmartGrid1
+   // from the LAST SELL ACTUALLY ACTIVATED.
+   double triggerPrice = NormalizePrice(
+      lastSellPrice + PointsToPrice(2.0 * SmartGrid1));
+
    if(Bid < triggerPrice) return;
 
-   double newSellStop = triggerPrice;
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
-   if(newSellStop >= Bid - stopLevel) return;
+   if(triggerPrice >= Bid - stopLevel) return;
 
-   double nextSellLot = NextSellLot(latestSellLot);
+   double nextLot = SellNextLot(lastSellLot);
 
    Print(EA_NAME,
-         " SELL PROGRESSION TRIGGERED. latestTicket=", latestSellTicket,
-         " latestSell=", DoubleToString(latestSellOpen, Digits),
-         " latestLot=", DoubleToString(latestSellLot, DigitsLots),
+         " SELL MACHINE: PROGRESSION TRIGGERED. lastTicket=", lastSellTicket,
+         " lastSell=", DoubleToString(lastSellPrice, Digits),
+         " lastLot=", DoubleToString(lastSellLot, DigitsLots),
          " multiplier=", DoubleToString(Multiplier, 2),
          " increment=", DoubleToString(LotIncrement, DigitsLots),
-         " nextLot=", DoubleToString(nextSellLot, DigitsLots),
+         " nextLot=", DoubleToString(nextLot, DigitsLots),
          " Bid=", DoubleToString(Bid, Digits),
          " triggerDistance=", DoubleToString(2.0 * SmartGrid1, 0),
          " triggerPrice=", DoubleToString(triggerPrice, Digits));
 
-   SendPending(OP_SELLSTOP, newSellStop, nextSellLot, "EAGOLD SELL PROGRESSION");
+   SendPending(OP_SELLSTOP, triggerPrice, nextLot,
+               "EAGOLD SELL PROGRESSION");
 }
 
-void InitializeBuyCloseTracker()
+void SellMachine()
 {
-   datetime latestCloseTime = 0;
-   int latestTicket = -1;
-   for(int i = OrdersHistoryTotal() - 1; i >= 0; i--)
-   {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) continue;
-      if(!IsEAGOLDOrder() || OrderType() != OP_BUY) continue;
-      datetime closeTime = OrderCloseTime();
-      int ticket = OrderTicket();
-      if(closeTime > latestCloseTime ||
-         (closeTime == latestCloseTime && ticket > latestTicket))
-      {
-         latestCloseTime = closeTime;
-         latestTicket = ticket;
-      }
-   }
-   LastProcessedBuyCloseTicket = latestTicket;
+   SellTrailPending();
+   SellTakeProfit();
+   SellProgression();
+   SellCreateFirstStep();
 }
 
-// BUY ENGINE ONLY.
-// This is the existing BUY reentry rule and remains independent from SELL.
-// When a BUY or BUY basket is closed, immediately create one BUY STOP
-// at MiniGrid1 points above the current ASK.
-void ProcessBuyReentryAfterClose()
-{
-   if(MiniGrid1 <= 0.0) return;
-
-   int latestClosedTicket = -1;
-   datetime latestCloseTime = 0;
-   double latestClosePrice = 0.0;
-   double latestClosedBuyLot = NormalizeLot(Lot);
-   bool foundNewClose = false;
-
-   for(int i = OrdersHistoryTotal() - 1; i >= 0; i--)
-   {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) continue;
-      if(!IsEAGOLDOrder() || OrderType() != OP_BUY) continue;
-
-      int ticket = OrderTicket();
-      datetime closeTime = OrderCloseTime();
-      if(ticket == LastProcessedBuyCloseTicket) continue;
-      if(closeTime <= 0) continue;
-
-      if(!foundNewClose || closeTime > latestCloseTime ||
-         (closeTime == latestCloseTime && ticket > latestClosedTicket))
-      {
-         foundNewClose = true;
-         latestCloseTime = closeTime;
-         latestClosedTicket = ticket;
-         latestClosePrice = OrderClosePrice();
-         latestClosedBuyLot = OrderLots();
-      }
-   }
-
-   if(!foundNewClose) return;
-   LastProcessedBuyCloseTicket = latestClosedTicket;
-
-   if(CountOrders(OP_BUYSTOP) > 0)
-   {
-      Print(EA_NAME,
-            " BUY CLOSE DETECTED but BUY STOP already exists. ticket=",
-            latestClosedTicket);
-      return;
-   }
-
-   RefreshRates();
-   double newBuyStop = NormalizePrice(Ask + PointsToPrice(MiniGrid1));
-   double nextBuyLot = NextBuyLot(latestClosedBuyLot);
-
-   Print(EA_NAME,
-         " BUY REENTRY TRIGGERED. closedTicket=", latestClosedTicket,
-         " closedPrice=", DoubleToString(latestClosePrice, Digits),
-         " previousLot=", DoubleToString(latestClosedBuyLot, DigitsLots),
-         " nextLot=", DoubleToString(nextBuyLot, DigitsLots),
-         " Ask=", DoubleToString(Ask, Digits),
-         " MiniGrid1=", DoubleToString(MiniGrid1, 0),
-         " newBUYSTOP=", DoubleToString(newBuyStop, Digits));
-
-   SendPending(OP_BUYSTOP, newBuyStop, nextBuyLot, "EAGOLD BUY REENTRY MINIGRID1");
-}
+// ============================================================
+// EA LIFECYCLE
+// ============================================================
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.020 initialized. FirstStep=", DoubleToString(FirstStep, 0),
+   Print(EA_NAME, " v0.030 initialized.",
+         " BUY and SELL are independent machines.",
+         " FirstStep=", DoubleToString(FirstStep, 0),
          " PendingStepTrail=", DoubleToString(PendingStepTrail, 0),
          " TakeProfitMoney=", DoubleToString(TakeProfit, 2),
          " SmartGrid1=", DoubleToString(SmartGrid1, 0),
@@ -396,8 +498,12 @@ int OnInit()
          " MaxOpenLot=", DoubleToString(MaxOpenLot, DigitsLots),
          " SELL Multiplier=", DoubleToString(Multiplier, 2));
 
-   InitializeBuyCloseTracker();
-   CreateFirstStepOrders();
+   BuyInitializeCloseTracker();
+
+   // Each machine initializes its own first-step order independently.
+   BuyCreateFirstStep();
+   SellCreateFirstStep();
+
    return(INIT_SUCCEEDED);
 }
 
@@ -407,10 +513,7 @@ void OnDeinit(const int reason)
 
 void OnTick()
 {
-   TrailSellStop();
-   TrailBuyStop();
-   ProcessBuyTakeProfit();
-   ProcessSellTakeProfit();
-   ProcessSellProgression();
-   ProcessBuyReentryAfterClose();
+   // Two independent state machines. Neither machine controls the other.
+   BuyMachine();
+   SellMachine();
 }
