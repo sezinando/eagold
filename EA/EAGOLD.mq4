@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.047"
+#property version   "0.048"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 7"
 
 input int    MagicNumber              = 1001;
@@ -265,6 +265,7 @@ void TrailRecoveryStopOrders()
 
 // ============================================================
 // RULE 7 - TRAILING OF R1 MARKET POSITIONS ONLY
+// R7 is exclusive to R1 and independent of R2/R6 conditions.
 // ============================================================
 void TrailR1Positions()
 {
@@ -416,7 +417,7 @@ void SellMachine(){ SellBasketClose(); SellSingleTakeProfit(); SellRecovery(); S
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.047 initialized. R1=FirstStep; R6=R2 recovery STOP trailing; R7=R1 position trailing. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
+   Print(EA_NAME, " v0.048 initialized. R1=FirstStep; R6=R2 recovery STOP trailing; R7=R1 position trailing. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
    BuyCreateFirstOrder();
    SellCreateFirstOrder();
    return(INIT_SUCCEEDED);
