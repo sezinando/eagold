@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.059"
+#property version   "0.060"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 7"
 
 input int    MagicNumber              = 1001;
@@ -24,8 +24,6 @@ input bool   EnableCloseBy            = false;
 input double BuyProgressionTolerance  = 10.0;
 
 string EA_NAME = "EAGOLD";
-bool BuyInitialCycleStarted = false;
-bool SellInitialCycleStarted = false;
 
 double PointsToPrice(double points){ return(points * Point); }
 double NormalizePrice(double price){ return(NormalizeDouble(price, Digits)); }
@@ -56,6 +54,17 @@ int CountOrdersByType(int type)
 }
 int CountDirectionPositions(int direction){ return(CountOrdersByType(direction == OP_BUY ? OP_BUY : OP_SELL)); }
 int CountDirectionPending(int direction){ return(CountOrdersByType(direction == OP_BUY ? OP_BUYSTOP : OP_SELLSTOP)); }
+
+int CountEAGOLDOrders()
+{
+   int count = 0;
+   for(int i=OrdersTotal()-1; i>=0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(IsEAGOLDOrder()) count++;
+   }
+   return(count);
+}
 
 double DirectionBasketProfit(int direction)
 {
@@ -120,26 +129,23 @@ bool CloseMarketOrder(int ticket)
 }
 
 // ============================================================
-// RULE 1 - FIRST STOP ORDERS / R1 EXCLUSIVE IDENTITY
+// RULE 1 - FIRST STOP ORDERS / NEW CYCLE WHEN COMPLETELY FLAT
+// R1 creates one BUY STOP and one SELL STOP whenever EAGOLD has
+// no open market positions and no pending orders at all.
+// If the complete EAGOLD cycle is closed, the next tick starts a
+// new cycle with both first orders.
 // ============================================================
-void BuyCreateFirstOrder()
+void CreateFirstOrdersIfFlat()
 {
-   if(BuyInitialCycleStarted) return;
-   if(CountDirectionPositions(OP_BUY) > 0) return;
-   if(CountDirectionPending(OP_BUY) > 0) return;
-   RefreshRates();
-   int ticket = SendPending(OP_BUYSTOP, Ask + PointsToPrice(FirstStep), Lot, "EAGOLD R1 FIRST BUY");
-   if(ticket > 0) BuyInitialCycleStarted = true;
-}
+   if(CountEAGOLDOrders() != 0) return;
 
-void SellCreateFirstOrder()
-{
-   if(SellInitialCycleStarted) return;
-   if(CountDirectionPositions(OP_SELL) > 0) return;
-   if(CountDirectionPending(OP_SELL) > 0) return;
    RefreshRates();
-   int ticket = SendPending(OP_SELLSTOP, Bid - PointsToPrice(FirstStep), Lot, "EAGOLD R1 FIRST SELL");
-   if(ticket > 0) SellInitialCycleStarted = true;
+
+   int buyTicket = SendPending(OP_BUYSTOP, Ask + PointsToPrice(FirstStep), Lot, "EAGOLD R1 FIRST BUY");
+   int sellTicket = SendPending(OP_SELLSTOP, Bid - PointsToPrice(FirstStep), Lot, "EAGOLD R1 FIRST SELL");
+
+   if(buyTicket > 0 || sellTicket > 0)
+      Print(EA_NAME, " RULE 1: new complete cycle started. BUY ticket=", buyTicket, " SELL ticket=", sellTicket);
 }
 
 // ============================================================
@@ -482,7 +488,6 @@ void BuyMachine()
    BuyBasketClose();
    BuySingleTakeProfit();
    BuyRecovery();
-   BuyCreateFirstOrder();
 }
 
 void SellMachine()
@@ -490,14 +495,12 @@ void SellMachine()
    SellBasketClose();
    SellSingleTakeProfit();
    SellRecovery();
-   SellCreateFirstOrder();
 }
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.059 initialized. R1 unchanged; R2 uses adverse distance minus spread; R6 unchanged; R7 unchanged. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
-   BuyCreateFirstOrder();
-   SellCreateFirstOrder();
+   Print(EA_NAME, " v0.060 initialized. R1 restarts whenever completely flat; R2 uses adverse distance minus spread; R6 unchanged; R7 unchanged. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
+   CreateFirstOrdersIfFlat();
    return(INIT_SUCCEEDED);
 }
 
@@ -505,6 +508,7 @@ void OnTick()
 {
    BuyMachine();
    SellMachine();
+   CreateFirstOrdersIfFlat();
    TrailRecoveryStopOrders();
    TrailR1FirstStopOrders();
 }
