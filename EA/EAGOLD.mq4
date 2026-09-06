@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.032"
+#property version   "0.033"
 #property description "EAGOLD - independent BUY and SELL state machines"
 
 input int    MagicNumber              = 1001;
@@ -18,7 +18,7 @@ input double MiniGrid1                = 250.0;
 input double SmartGrid1               = 80.0;
 input double MiniGrid2                = 80.0;
 input double SmartGrid2               = 60.0;
-input double PendingStepTrail          = 50.0;
+input double PendingStepTrail         = 50.0;
 input int    MaxTrades                = 2000;
 input bool   EnableCloseBy            = false;
 input double BuyProgressionTolerance  = 10.0;
@@ -312,10 +312,10 @@ void SellTrailPending()
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType() != OP_SELLSTOP) continue;
 
-      // Only FIRST STEP SELL STOP is trailed.
-      // SELL PROGRESSION remains fixed at its calculated entry level.
-      if(OrderComment() != "EAGOLD FIRST STEP SELL") continue;
-
+      // ALL SELL STOP orders follow the same initial trailing rule.
+      // FIRST STEP and PROGRESSION are both trailed upward only.
+      // They use FirstStep as the target distance and
+      // PendingStepTrail as the minimum movement before modification.
       RefreshRates();
 
       double desired   = NormalizePrice(Bid - PointsToPrice(FirstStep));
@@ -323,24 +323,29 @@ void SellTrailPending()
       double movement  = desired - current;
       double trailStep = PointsToPrice(PendingStepTrail);
 
+      // SELL STOP only trails upward. It never moves downward.
       if(desired <= current) continue;
       if(movement < trailStep) continue;
 
       double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
       if(desired >= Bid - stopLevel) continue;
 
+      string comment = OrderComment();
+
       ResetLastError();
       if(!OrderModify(OrderTicket(), desired, 0, 0, 0, clrNONE))
       {
-         Print(EA_NAME, " SELL MACHINE: FIRST STEP SELL STOP modify failed. ticket=",
-               OrderTicket(), " current=", DoubleToString(current, Digits),
+         Print(EA_NAME, " SELL MACHINE: SELL STOP modify failed. ticket=",
+               OrderTicket(), " comment=", comment,
+               " current=", DoubleToString(current, Digits),
                " desired=", DoubleToString(desired, Digits),
                " error=", GetLastError());
       }
       else
       {
-         Print(EA_NAME, " SELL MACHINE: FIRST STEP SELL STOP TRAIL UP. ticket=",
-               OrderTicket(), " from=", DoubleToString(current, Digits),
+         Print(EA_NAME, " SELL MACHINE: SELL STOP TRAIL UP. ticket=",
+               OrderTicket(), " comment=", comment,
+               " from=", DoubleToString(current, Digits),
                " to=", DoubleToString(desired, Digits));
       }
    }
@@ -436,9 +441,7 @@ void SellProgression()
    if(Bid < triggerPrice) return;
 
    // STEP 2: once the 2 x SmartGrid1 level is reached,
-   // the new SELL STOP is positioned at LAST SELL + SmartGrid1.
-   // Therefore the pending entry is one SmartGrid1 below the
-   // price level that triggered its creation.
+   // position the new SELL STOP at LAST SELL + SmartGrid1.
    double newSellStop = NormalizePrice(
       lastSellPrice + PointsToPrice(SmartGrid1));
 
@@ -460,7 +463,6 @@ void SellProgression()
          " entryDistance=", DoubleToString(SmartGrid1, 0),
          " newSELLSTOP=", DoubleToString(newSellStop, Digits));
 
-   // Progression pending is fixed. It is NOT trailed by FirstStep.
    SendPending(OP_SELLSTOP, newSellStop, nextLot,
                "EAGOLD SELL PROGRESSION");
 }
@@ -479,7 +481,7 @@ void SellMachine()
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.032 initialized.",
+   Print(EA_NAME, " v0.033 initialized.",
          " BUY and SELL are independent machines.",
          " FirstStep=", DoubleToString(FirstStep, 0),
          " PendingStepTrail=", DoubleToString(PendingStepTrail, 0),
