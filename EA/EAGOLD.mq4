@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.046"
+#property version   "0.047"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 7"
 
 input int    MagicNumber              = 1001;
@@ -115,6 +115,7 @@ bool CloseMarketOrder(int ticket)
 
 // ============================================================
 // RULE 1 - FIRST STOP ORDERS
+// R1 uses FirstStep. MiniGrid1 is not used for first orders.
 // ============================================================
 void BuyCreateFirstOrder()
 {
@@ -122,7 +123,7 @@ void BuyCreateFirstOrder()
    if(CountDirectionPositions(OP_BUY) > 0) return;
    if(CountDirectionPending(OP_BUY) > 0) return;
    RefreshRates();
-   int ticket = SendPending(OP_BUYSTOP, Ask + PointsToPrice(MiniGrid1), Lot, "EAGOLD FIRST BUY");
+   int ticket = SendPending(OP_BUYSTOP, Ask + PointsToPrice(FirstStep), Lot, "EAGOLD FIRST BUY");
    if(ticket > 0) BuyInitialCycleStarted = true;
 }
 
@@ -132,7 +133,7 @@ void SellCreateFirstOrder()
    if(CountDirectionPositions(OP_SELL) > 0) return;
    if(CountDirectionPending(OP_SELL) > 0) return;
    RefreshRates();
-   int ticket = SendPending(OP_SELLSTOP, Bid - PointsToPrice(MiniGrid1), Lot, "EAGOLD FIRST SELL");
+   int ticket = SendPending(OP_SELLSTOP, Bid - PointsToPrice(FirstStep), Lot, "EAGOLD FIRST SELL");
    if(ticket > 0) SellInitialCycleStarted = true;
 }
 
@@ -415,7 +416,7 @@ void SellMachine(){ SellBasketClose(); SellSingleTakeProfit(); SellRecovery(); S
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.046 initialized. R6=R2 recovery STOP trailing; R7=R1 position trailing. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
+   Print(EA_NAME, " v0.047 initialized. R1=FirstStep; R6=R2 recovery STOP trailing; R7=R1 position trailing. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
    BuyCreateFirstOrder();
    SellCreateFirstOrder();
    return(INIT_SUCCEEDED);
