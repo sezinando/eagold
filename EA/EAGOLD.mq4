@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.031"
+#property version   "0.032"
 #property description "EAGOLD - independent BUY and SELL state machines"
 
 input int    MagicNumber              = 1001;
@@ -312,10 +312,8 @@ void SellTrailPending()
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType() != OP_SELLSTOP) continue;
 
-      // IMPORTANT:
-      // Only the FIRST STEP SELL STOP is subject to FirstStep trailing.
-      // A SELL PROGRESSION STOP is fixed at the level where the
-      // 2 x SmartGrid1 condition was reached and must NOT be trailed.
+      // Only FIRST STEP SELL STOP is trailed.
+      // SELL PROGRESSION remains fixed at its calculated entry level.
       if(OrderComment() != "EAGOLD FIRST STEP SELL") continue;
 
       RefreshRates();
@@ -430,15 +428,22 @@ void SellProgression()
 
    RefreshRates();
 
-   // The trigger is always calculated from the LAST SELL ACTUALLY ACTIVATED.
-   // SELL adverse movement is upward by 2 x SmartGrid1.
+   // STEP 1: price must first travel 2 x SmartGrid1 upward
+   // from the LAST SELL ACTUALLY ACTIVATED.
    double triggerPrice = NormalizePrice(
       lastSellPrice + PointsToPrice(2.0 * SmartGrid1));
 
    if(Bid < triggerPrice) return;
 
+   // STEP 2: once the 2 x SmartGrid1 level is reached,
+   // the new SELL STOP is positioned at LAST SELL + SmartGrid1.
+   // Therefore the pending entry is one SmartGrid1 below the
+   // price level that triggered its creation.
+   double newSellStop = NormalizePrice(
+      lastSellPrice + PointsToPrice(SmartGrid1));
+
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
-   if(triggerPrice >= Bid - stopLevel) return;
+   if(newSellStop >= Bid - stopLevel) return;
 
    double nextLot = SellNextLot(lastSellLot);
 
@@ -451,11 +456,12 @@ void SellProgression()
          " nextLot=", DoubleToString(nextLot, DigitsLots),
          " Bid=", DoubleToString(Bid, Digits),
          " triggerDistance=", DoubleToString(2.0 * SmartGrid1, 0),
-         " triggerPrice=", DoubleToString(triggerPrice, Digits));
+         " triggerPrice=", DoubleToString(triggerPrice, Digits),
+         " entryDistance=", DoubleToString(SmartGrid1, 0),
+         " newSELLSTOP=", DoubleToString(newSellStop, Digits));
 
-   // This pending is intentionally FIXED at the trigger level.
-   // It will not be moved by SellTrailPending().
-   SendPending(OP_SELLSTOP, triggerPrice, nextLot,
+   // Progression pending is fixed. It is NOT trailed by FirstStep.
+   SendPending(OP_SELLSTOP, newSellStop, nextLot,
                "EAGOLD SELL PROGRESSION");
 }
 
@@ -473,13 +479,14 @@ void SellMachine()
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.031 initialized.",
+   Print(EA_NAME, " v0.032 initialized.",
          " BUY and SELL are independent machines.",
          " FirstStep=", DoubleToString(FirstStep, 0),
          " PendingStepTrail=", DoubleToString(PendingStepTrail, 0),
          " TakeProfitMoney=", DoubleToString(TakeProfit, 2),
          " SmartGrid1=", DoubleToString(SmartGrid1, 0),
          " SELL trigger=", DoubleToString(2.0 * SmartGrid1, 0),
+         " SELL entry offset=", DoubleToString(SmartGrid1, 0),
          " MiniGrid1=", DoubleToString(MiniGrid1, 0),
          " Lot=", DoubleToString(Lot, DigitsLots),
          " LotIncrement=", DoubleToString(LotIncrement, DigitsLots),
