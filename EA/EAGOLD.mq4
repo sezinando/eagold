@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.053"
+#property version   "0.054"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 7"
 
 input int    MagicNumber              = 1001;
@@ -272,112 +272,32 @@ void TrailRecoveryStopOrders()
 }
 
 // ============================================================
-// RULE 7 - R1 OPPOSITE STOP TRAILING
-// R7 never modifies StopLoss.
-// R7 uses the STOP opposite to the activated R1 position:
-//   R1 BUY  -> SellStop
-//   R1 SELL -> BuyStop
-// The R7 STOP is created 1x SmartGrid1 from the current price
-// when the R1 position exists.
-// Trailing is based on the STOP's own distance to the market:
-//   initial distance = 1x SmartGrid1
-//   trigger distance = 1x SmartGrid1 + 1x PendingStepTrail
-// Once the trigger distance is exceeded, the STOP is moved
-// 1x PendingStepTrail toward the current price.
-// After each modification, the STOP becomes the new reference.
-// Example: SellStop=200, price=360, SG=160, Step=50.
-// Price=410 -> distance=210 -> SellStop 200 -> 250.
+// RULE 7 - TRAILING OF R1 FIRST STOP ORDERS
+// R7 operates independently of order activation.
+// It does NOT wait for BUY or SELL R1 to become a market position.
+// It does NOT create a second STOP.
+// It modifies the original R1 FIRST STOP itself.
+//
+// R1 BUY  = "EAGOLD R1 FIRST BUY"  -> BUY STOP trails DOWN.
+// R1 SELL = "EAGOLD R1 FIRST SELL" -> SELL STOP trails UP.
+//
+// The trailing reference is the STOP's current price.
+// The STOP remains 1x SmartGrid1 from the current market price.
+// R7 is triggered when the market-to-STOP distance reaches
+// 1x SmartGrid1 + 1x PendingStepTrail.
+// After the trigger, the STOP is moved toward the market so that
+// its distance is restored to 1x SmartGrid1.
+//
+// Example:
+// SmartGrid1=160, PendingStepTrail=50
+// SellStop=200, market=360 -> distance=160, no trailing.
+// Market=410 -> distance=210 -> SellStop 200 becomes 250.
+// The same logic repeats for every additional 50-point movement.
 // ============================================================
-bool HasR1TrailPending(int type)
-{
-   string wanted = (type == OP_BUYSTOP ? "EAGOLD R1 BUY TRAIL" : "EAGOLD R1 SELL TRAIL");
-   for(int i=OrdersTotal()-1; i>=0; i--)
-   {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(!IsEAGOLDOrder() || OrderType() != type) continue;
-      if(StringFind(OrderComment(), wanted, 0) >= 0) return(true);
-   }
-   return(false);
-}
-
-bool HasR1MarketPosition(int type, int &ticket, double &openPrice, double &lots)
-{
-   string wanted = (type == OP_BUY ? "EAGOLD R1 FIRST BUY" : "EAGOLD R1 FIRST SELL");
-   ticket = -1;
-   openPrice = 0.0;
-   lots = 0.0;
-   datetime latestTime = 0;
-   bool found = false;
-
-   for(int i=OrdersTotal()-1; i>=0; i--)
-   {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(!IsEAGOLDOrder() || OrderType() != type) continue;
-      if(StringFind(OrderComment(), wanted, 0) < 0) continue;
-
-      datetime t = OrderOpenTime();
-      int currentTicket = OrderTicket();
-      if(!found || t > latestTime || (t == latestTime && currentTicket > ticket))
-      {
-         found = true;
-         latestTime = t;
-         ticket = currentTicket;
-         openPrice = OrderOpenPrice();
-         lots = OrderLots();
-      }
-   }
-   return(found);
-}
-
-void CreateR1OppositeStop(int r1Type, double lots)
-{
-   if(SmartGrid1 <= 0.0) return;
-
-   int pendingType = (r1Type == OP_BUY ? OP_SELLSTOP : OP_BUYSTOP);
-   if(HasR1TrailPending(pendingType)) return;
-
-   RefreshRates();
-   double price = 0.0;
-   string comment = "";
-
-   if(pendingType == OP_SELLSTOP)
-   {
-      price = NormalizePrice(Bid - PointsToPrice(SmartGrid1));
-      comment = "EAGOLD R1 SELL TRAIL";
-   }
-   else
-   {
-      price = NormalizePrice(Ask + PointsToPrice(SmartGrid1));
-      comment = "EAGOLD R1 BUY TRAIL";
-   }
-
-   int ticket = SendPending(pendingType, price, lots, comment);
-   if(ticket > 0)
-      Print(EA_NAME, " RULE 7: R1 opposite STOP CREATED. type=", pendingType,
-            " price=", DoubleToString(price, Digits),
-            " lot=", DoubleToString(lots, DigitsLots));
-}
-
-void EnsureR1OppositeStops()
-{
-   int ticket = -1;
-   double openPrice = 0.0;
-   double lots = 0.0;
-
-   if(HasR1MarketPosition(OP_BUY, ticket, openPrice, lots))
-      CreateR1OppositeStop(OP_BUY, lots);
-
-   ticket = -1;
-   openPrice = 0.0;
-   lots = 0.0;
-
-   if(HasR1MarketPosition(OP_SELL, ticket, openPrice, lots))
-      CreateR1OppositeStop(OP_SELL, lots);
-}
-
-void TrailR1PendingOrders()
+void TrailR1FirstStopOrders()
 {
    if(SmartGrid1 <= 0.0 || PendingStepTrail <= 0.0) return;
+
    double trailDistance = PointsToPrice(SmartGrid1);
    double trailStep = PointsToPrice(PendingStepTrail);
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
@@ -391,8 +311,10 @@ void TrailR1PendingOrders()
       if(type != OP_BUYSTOP && type != OP_SELLSTOP) continue;
 
       string comment = OrderComment();
-      if(type == OP_BUYSTOP && StringFind(comment, "EAGOLD R1 BUY TRAIL", 0) < 0) continue;
-      if(type == OP_SELLSTOP && StringFind(comment, "EAGOLD R1 SELL TRAIL", 0) < 0) continue;
+
+      // R7 is exclusive to the original R1 first-order STOPs.
+      if(type == OP_BUYSTOP && StringFind(comment, "EAGOLD R1 FIRST BUY", 0) < 0) continue;
+      if(type == OP_SELLSTOP && StringFind(comment, "EAGOLD R1 FIRST SELL", 0) < 0) continue;
 
       RefreshRates();
       double current = OrderOpenPrice();
@@ -401,22 +323,26 @@ void TrailR1PendingOrders()
 
       if(type == OP_SELLSTOP)
       {
+         // SELL STOP trails upward when price moves upward away from it.
          double distance = Bid - current;
          if(distance < trailDistance + trailStep) continue;
 
          desired = NormalizePrice(Bid - trailDistance);
          movement = desired - current;
+
          if(movement < trailStep) continue;
          if(desired <= current) continue;
          if(desired >= Bid - stopLevel) continue;
       }
       else
       {
+         // BUY STOP trails downward when price moves downward away from it.
          double distance = current - Ask;
          if(distance < trailDistance + trailStep) continue;
 
          desired = NormalizePrice(Ask + trailDistance);
          movement = current - desired;
+
          if(movement < trailStep) continue;
          if(desired >= current) continue;
          if(desired <= Ask + stopLevel) continue;
@@ -425,9 +351,9 @@ void TrailR1PendingOrders()
       int ticket = OrderTicket();
       ResetLastError();
       if(!OrderModify(ticket, desired, 0, 0, 0, clrNONE))
-         Print(EA_NAME, " RULE 7: R1 OPPOSITE STOP TRAIL FAILED. ticket=", ticket, " error=", GetLastError());
+         Print(EA_NAME, " RULE 7: R1 FIRST STOP TRAIL FAILED. ticket=", ticket, " error=", GetLastError());
       else
-         Print(EA_NAME, " RULE 7: R1 OPPOSITE STOP TRAIL. ticket=", ticket,
+         Print(EA_NAME, " RULE 7: R1 FIRST STOP TRAIL. ticket=", ticket,
                " from=", DoubleToString(current, Digits),
                " to=", DoubleToString(desired, Digits));
    }
@@ -530,7 +456,7 @@ void SellMachine(){ SellBasketClose(); SellSingleTakeProfit(); SellRecovery(); S
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.053 initialized. R1=exclusive first-order identity using EAGOLD R1 FIRST BUY/SELL; R6=R2 recovery STOP trailing; R7=R1 opposite STOP trailing by PendingStepTrail. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
+   Print(EA_NAME, " v0.054 initialized. R1=exclusive first-order identity; R6=R2 recovery STOP trailing; R7=independent trailing of R1 FIRST STOPs by PendingStepTrail. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
    BuyCreateFirstOrder();
    SellCreateFirstOrder();
    return(INIT_SUCCEEDED);
@@ -542,10 +468,10 @@ void OnTick()
 {
    // R2/R3/R4/R5 machines execute first.
    // R6 trails only Recovery STOPs created by R2.
-   // R7 creates/trails the STOP opposite to R1.
+   // R7 independently trails the original R1 FIRST STOPs.
+   // R7 does not depend on any R1 activation.
    BuyMachine();
    SellMachine();
-   EnsureR1OppositeStops();
    TrailRecoveryStopOrders();
-   TrailR1PendingOrders();
+   TrailR1FirstStopOrders();
 }
