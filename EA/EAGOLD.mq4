@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.065"
+#property version   "0.066"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 8"
 
 input int    MagicNumber              = 1001;
@@ -221,7 +221,13 @@ void SellRecovery()
    SendPending(OP_SELLSTOP,newStop,nextLot,"EAGOLD SELL RECOVERY");
 }
 
-void TrailRecoveryStopOrders()
+// RULE 6 - TRAILING OF ALL STOP ORDERS EXCEPT THE R1 FIRST STOP.
+// Every non-R1 STOP follows the favorable market direction.
+// SELL STOP can only move upward; BUY STOP can only move downward.
+// Trigger distance: 2 x SmartGrid1.
+// Trailing distance: RecoveryMinDistance (ZEUS MinDistance).
+// Minimum favorable movement between modifications: PendingStepTrail.
+void TrailStopOrdersRule6()
 {
    if(SmartGrid1<=0.0 || RecoveryMinDistance<=0.0 || PendingStepTrail<=0.0) return;
    double triggerDistance=PointsToPrice(2.0*SmartGrid1);
@@ -235,10 +241,10 @@ void TrailRecoveryStopOrders()
       if(!IsEAGOLDOrder()) continue;
       int type=OrderType();
       if(type!=OP_BUYSTOP && type!=OP_SELLSTOP) continue;
+
       string comment=OrderComment();
-      bool buyRecovery=(type==OP_BUYSTOP && StringFind(comment,"EAGOLD BUY RECOVERY",0)>=0);
-      bool sellRecovery=(type==OP_SELLSTOP && StringFind(comment,"EAGOLD SELL RECOVERY",0)>=0);
-      if(!buyRecovery && !sellRecovery) continue;
+      if(StringFind(comment,"EAGOLD R1 FIRST BUY",0)>=0) continue;
+      if(StringFind(comment,"EAGOLD R1 FIRST SELL",0)>=0) continue;
 
       RefreshRates();
       double current=OrderOpenPrice();
@@ -265,9 +271,9 @@ void TrailRecoveryStopOrders()
       int ticket=OrderTicket();
       ResetLastError();
       if(!OrderModify(ticket,desired,0,0,0,clrNONE))
-         Print(EA_NAME," RULE 6: STOP TRAIL FAILED. ticket=",ticket," error=",GetLastError());
+         Print(EA_NAME," RULE 6: STOP TRAIL FAILED. ticket=",ticket," comment=",comment," error=",GetLastError());
       else
-         Print(EA_NAME," RULE 6: STOP TRAIL. ticket=",ticket," from=",DoubleToString(current,Digits)," to=",DoubleToString(desired,Digits));
+         Print(EA_NAME," RULE 6: STOP TRAIL. ticket=",ticket," comment=",comment," from=",DoubleToString(current,Digits)," to=",DoubleToString(desired,Digits));
    }
 }
 
@@ -432,7 +438,7 @@ void SellMachine()
 
 int OnInit()
 {
-   Print(EA_NAME," v0.065 initialized. R6 trigger=2x SmartGrid1; R6 trail=RecoveryMinDistance; R6 step=PendingStepTrail; R8=restart closed basket.");
+   Print(EA_NAME," v0.066 initialized. R6=all non-R1 STOPs; trigger=2x SmartGrid1; trail=RecoveryMinDistance; step=PendingStepTrail.");
    CreateFirstOrdersIfFlat();
    return(INIT_SUCCEEDED);
 }
@@ -442,6 +448,6 @@ void OnTick()
    BuyMachine();
    SellMachine();
    CreateFirstOrdersIfFlat();
-   TrailRecoveryStopOrders();
+   TrailStopOrdersRule6();
    TrailR1FirstStopOrders();
 }
