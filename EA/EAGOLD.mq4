@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.052"
+#property version   "0.053"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 7"
 
 input int    MagicNumber              = 1001;
@@ -11,9 +11,9 @@ input double MaxOpenLot               = 3.00;
 input double TakeProfit               = 5.00;
 input double SellProfit               = 30.00;
 input double BasketLoss               = 100.00;
-input int    SpreadLimit               = 100;
+input int    SpreadLimit              = 100;
 input int    WaitSeconds              = 0;
-input double FirstStep                 = 160.0;
+input double FirstStep                = 160.0;
 input double MiniGrid1                = 250.0;
 input double SmartGrid1               = 80.0;
 input double MiniGrid2                = 80.0;
@@ -114,8 +114,15 @@ bool CloseMarketOrder(int ticket)
 }
 
 // ============================================================
-// RULE 1 - FIRST STOP ORDERS
-// R1 uses FirstStep. MiniGrid1 is not used for first orders.
+// RULE 1 - FIRST STOP ORDERS / R1 EXCLUSIVE IDENTITY
+// R1 is the first independent BUY/SELL order of the machine.
+// BUY  -> BUY STOP at Ask + 1x FirstStep.
+// SELL -> SELL STOP at Bid - 1x FirstStep.
+// R1 does NOT use MiniGrid1 for its creation.
+// R1 has an exclusive comment so later rules can identify it
+// without confusing it with Recovery or TP Reentry orders.
+// R1 BUY  comment: EAGOLD R1 FIRST BUY
+// R1 SELL comment: EAGOLD R1 FIRST SELL
 // ============================================================
 void BuyCreateFirstOrder()
 {
@@ -123,7 +130,7 @@ void BuyCreateFirstOrder()
    if(CountDirectionPositions(OP_BUY) > 0) return;
    if(CountDirectionPending(OP_BUY) > 0) return;
    RefreshRates();
-   int ticket = SendPending(OP_BUYSTOP, Ask + PointsToPrice(FirstStep), Lot, "EAGOLD FIRST BUY");
+   int ticket = SendPending(OP_BUYSTOP, Ask + PointsToPrice(FirstStep), Lot, "EAGOLD R1 FIRST BUY");
    if(ticket > 0) BuyInitialCycleStarted = true;
 }
 
@@ -133,7 +140,7 @@ void SellCreateFirstOrder()
    if(CountDirectionPositions(OP_SELL) > 0) return;
    if(CountDirectionPending(OP_SELL) > 0) return;
    RefreshRates();
-   int ticket = SendPending(OP_SELLSTOP, Bid - PointsToPrice(FirstStep), Lot, "EAGOLD FIRST SELL");
+   int ticket = SendPending(OP_SELLSTOP, Bid - PointsToPrice(FirstStep), Lot, "EAGOLD R1 FIRST SELL");
    if(ticket > 0) SellInitialCycleStarted = true;
 }
 
@@ -295,7 +302,7 @@ bool HasR1TrailPending(int type)
 
 bool HasR1MarketPosition(int type, int &ticket, double &openPrice, double &lots)
 {
-   string wanted = (type == OP_BUY ? "EAGOLD FIRST BUY" : "EAGOLD FIRST SELL");
+   string wanted = (type == OP_BUY ? "EAGOLD R1 FIRST BUY" : "EAGOLD R1 FIRST SELL");
    ticket = -1;
    openPrice = 0.0;
    lots = 0.0;
@@ -394,7 +401,6 @@ void TrailR1PendingOrders()
 
       if(type == OP_SELLSTOP)
       {
-         // SellStop trails upward when price moves upward away from it.
          double distance = Bid - current;
          if(distance < trailDistance + trailStep) continue;
 
@@ -406,7 +412,6 @@ void TrailR1PendingOrders()
       }
       else
       {
-         // BuyStop trails downward when price moves downward away from it.
          double distance = current - Ask;
          if(distance < trailDistance + trailStep) continue;
 
@@ -525,7 +530,7 @@ void SellMachine(){ SellBasketClose(); SellSingleTakeProfit(); SellRecovery(); S
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.052 initialized. R1=FirstStep; R6=R2 recovery STOP trailing; R7=R1 opposite STOP trailing by PendingStepTrail. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
+   Print(EA_NAME, " v0.053 initialized. R1=exclusive first-order identity using EAGOLD R1 FIRST BUY/SELL; R6=R2 recovery STOP trailing; R7=R1 opposite STOP trailing by PendingStepTrail. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
    BuyCreateFirstOrder();
    SellCreateFirstOrder();
    return(INIT_SUCCEEDED);
