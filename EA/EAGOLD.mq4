@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.056"
+#property version   "0.057"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 7"
 
 input int    MagicNumber              = 1001;
@@ -36,6 +36,12 @@ double NormalizeLot(double lot)
    return(NormalizeDouble(lot, DigitsLots));
 }
 bool IsEAGOLDOrder(){ return(OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber); }
+
+double CurrentSpreadPrice()
+{
+   RefreshRates();
+   return(Ask - Bid);
+}
 
 int CountOrdersByType(int type)
 {
@@ -139,13 +145,11 @@ void SellCreateFirstOrder()
 // ============================================================
 // RULE 2 + RULE 3 - RECOVERY
 // R2 is evaluated from the LAST ACTIVATED market position.
-// It does not use a pending order as the reference.
-// Trigger is STRICTLY greater than 2x SmartGrid1 in the adverse
-// direction. The new Recovery STOP remains 1x SmartGrid1 from
-// the last activated position.
-// A recovery pending is blocked only when a Recovery STOP of the
-// same direction already exists; other STOP categories do not
-// invalidate the R2 trigger.
+// The effective adverse distance always discounts the current spread.
+// SELL: (Ask - lastPrice) - Spread > 2x SmartGrid1.
+// BUY : (lastPrice - Bid) - Spread > 2x SmartGrid1.
+// Equivalently, SELL uses Bid-lastPrice and BUY uses lastPrice-Ask.
+// The Recovery STOP itself remains 1x SmartGrid1 from the last position.
 // ============================================================
 bool GetLatestActivatedPosition(int direction, double &latestPrice, double &latestLot, int &latestTicket)
 {
@@ -203,20 +207,23 @@ void BuyRecovery()
    if(!GetLatestActivatedPosition(OP_BUY, lastPrice, lastLot, lastTicket)) return;
 
    RefreshRates();
-   double trigger = lastPrice - PointsToPrice(2.0 * SmartGrid1);
+   double spread = CurrentSpreadPrice();
+   double effectiveDistance = lastPrice - Bid - spread;
+   double requiredDistance = PointsToPrice(2.0 * SmartGrid1);
 
-   // R2 BUY: price must move strictly MORE than 2x SmartGrid1 below
-   // the last activated BUY position.
-   if(Bid >= trigger) return;
+   if(effectiveDistance <= requiredDistance) return;
 
    double newStop = NormalizePrice(lastPrice - PointsToPrice(SmartGrid1));
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
    if(newStop <= Ask + stopLevel)
    {
-      Print(EA_NAME, " BUY R2: trigger reached but Recovery BUY STOP is invalid at current market. lastTicket=", lastTicket,
+      Print(EA_NAME, " BUY R2: effective trigger reached but Recovery BUY STOP is invalid. lastTicket=", lastTicket,
             " lastPrice=", DoubleToString(lastPrice, Digits),
             " Bid=", DoubleToString(Bid, Digits),
             " Ask=", DoubleToString(Ask, Digits),
+            " spread=", DoubleToString(spread, Digits),
+            " effectiveDistance=", DoubleToString(effectiveDistance, Digits),
+            " required=", DoubleToString(requiredDistance, Digits),
             " stop=", DoubleToString(newStop, Digits));
       return;
    }
@@ -225,8 +232,11 @@ void BuyRecovery()
    Print(EA_NAME, " BUY R2/R3 AUTHORIZED. lastTicket=", lastTicket,
          " lastPrice=", DoubleToString(lastPrice, Digits),
          " lastLot=", DoubleToString(lastLot, DigitsLots),
-         " trigger=", DoubleToString(trigger, Digits),
          " Bid=", DoubleToString(Bid, Digits),
+         " Ask=", DoubleToString(Ask, Digits),
+         " spread=", DoubleToString(spread, Digits),
+         " effectiveDistance=", DoubleToString(effectiveDistance, Digits),
+         " required=", DoubleToString(requiredDistance, Digits),
          " stop=", DoubleToString(newStop, Digits),
          " nextLot=", DoubleToString(nextLot, DigitsLots));
    SendPending(OP_BUYSTOP, newStop, nextLot, "EAGOLD BUY RECOVERY");
@@ -243,20 +253,23 @@ void SellRecovery()
    if(!GetLatestActivatedPosition(OP_SELL, lastPrice, lastLot, lastTicket)) return;
 
    RefreshRates();
-   double trigger = lastPrice + PointsToPrice(2.0 * SmartGrid1);
+   double spread = CurrentSpreadPrice();
+   double effectiveDistance = Ask - lastPrice - spread;
+   double requiredDistance = PointsToPrice(2.0 * SmartGrid1);
 
-   // R2 SELL: price must move strictly MORE than 2x SmartGrid1 above
-   // the last activated SELL position.
-   if(Ask <= trigger) return;
+   if(effectiveDistance <= requiredDistance) return;
 
    double newStop = NormalizePrice(lastPrice + PointsToPrice(SmartGrid1));
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
    if(newStop >= Bid - stopLevel)
    {
-      Print(EA_NAME, " SELL R2: trigger reached but Recovery SELL STOP is invalid at current market. lastTicket=", lastTicket,
+      Print(EA_NAME, " SELL R2: effective trigger reached but Recovery SELL STOP is invalid. lastTicket=", lastTicket,
             " lastPrice=", DoubleToString(lastPrice, Digits),
             " Bid=", DoubleToString(Bid, Digits),
             " Ask=", DoubleToString(Ask, Digits),
+            " spread=", DoubleToString(spread, Digits),
+            " effectiveDistance=", DoubleToString(effectiveDistance, Digits),
+            " required=", DoubleToString(requiredDistance, Digits),
             " stop=", DoubleToString(newStop, Digits));
       return;
    }
@@ -265,8 +278,11 @@ void SellRecovery()
    Print(EA_NAME, " SELL R2/R3 AUTHORIZED. lastTicket=", lastTicket,
          " lastPrice=", DoubleToString(lastPrice, Digits),
          " lastLot=", DoubleToString(lastLot, DigitsLots),
-         " trigger=", DoubleToString(trigger, Digits),
+         " Bid=", DoubleToString(Bid, Digits),
          " Ask=", DoubleToString(Ask, Digits),
+         " spread=", DoubleToString(spread, Digits),
+         " effectiveDistance=", DoubleToString(effectiveDistance, Digits),
+         " required=", DoubleToString(requiredDistance, Digits),
          " stop=", DoubleToString(newStop, Digits),
          " nextLot=", DoubleToString(nextLot, DigitsLots));
    SendPending(OP_SELLSTOP, newStop, nextLot, "EAGOLD SELL RECOVERY");
@@ -465,7 +481,7 @@ void SellMachine(){ SellBasketClose(); SellSingleTakeProfit(); SellRecovery(); S
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.056 initialized. R1 unchanged; R2 uses last activated position and strict >2x SmartGrid1 trigger; R6 unchanged; R7 unchanged. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
+   Print(EA_NAME, " v0.057 initialized. R2 additions now discount current spread; R1/R6/R7 unchanged. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
    BuyCreateFirstOrder();
    SellCreateFirstOrder();
    return(INIT_SUCCEEDED);
