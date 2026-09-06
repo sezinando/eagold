@@ -1,6 +1,6 @@
 #property strict
-#property version   "0.012"
-#property description "EAGOLD - FirstStep, directional trailing, initial BUY/SELL TakeProfit and SELL progression"
+#property version   "0.013"
+#property description "EAGOLD - FirstStep, directional trailing, monetary TakeProfit and SELL progression"
 
 input int    MagicNumber              = 1001;
 input double Lot                      = 0.01;
@@ -171,8 +171,9 @@ void TrailSellStop()
 }
 
 // INITIAL BUY TAKE PROFIT:
-// Only the original FIRST STEP BUY is closed by TakeProfit.
-// No other BUY management is active at this stage.
+// TakeProfit is a MONETARY target in the account currency, not a price/point distance.
+// Only the original FIRST STEP BUY is closed by this rule.
+// The BUY remains open until OrderProfit() reaches TakeProfit.
 void ProcessBuyTakeProfit()
 {
    if(TakeProfit <= 0.0) return;
@@ -184,38 +185,37 @@ void ProcessBuyTakeProfit()
       if(OrderComment() != "EAGOLD FIRST STEP BUY") continue;
 
       RefreshRates();
-      double openPrice = OrderOpenPrice();
-      double target    = NormalizePrice(openPrice + PointsToPrice(TakeProfit));
 
-      if(Bid < target) continue;
+      double profit = OrderProfit();
+      if(profit < TakeProfit) continue;
 
-      int ticket        = OrderTicket();
-      double lots       = OrderLots();
-      double closePrice = NormalizePrice(Bid);
+      int ticket     = OrderTicket();
+      double lots    = OrderLots();
+      double bid     = NormalizePrice(Bid);
 
       ResetLastError();
-      if(!OrderClose(ticket, lots, closePrice, 0, clrNONE))
+      if(!OrderClose(ticket, lots, bid, 0, clrNONE))
       {
-         Print(EA_NAME, " INITIAL BUY TAKE PROFIT close failed. ticket=", ticket,
-               " open=", DoubleToString(openPrice, Digits),
-               " target=", DoubleToString(target, Digits),
-               " Bid=", DoubleToString(Bid, Digits),
+         Print(EA_NAME, " INITIAL BUY MONETARY TAKE PROFIT close failed. ticket=", ticket,
+               " profit=", DoubleToString(profit, 2),
+               " targetMoney=", DoubleToString(TakeProfit, 2),
+               " Bid=", DoubleToString(bid, Digits),
                " error=", GetLastError());
       }
       else
       {
-         Print(EA_NAME, " INITIAL BUY TAKE PROFIT. ticket=", ticket,
-               " open=", DoubleToString(openPrice, Digits),
-               " target=", DoubleToString(target, Digits),
-               " close=", DoubleToString(closePrice, Digits));
+         Print(EA_NAME, " INITIAL BUY MONETARY TAKE PROFIT. ticket=", ticket,
+               " profit=", DoubleToString(profit, 2),
+               " targetMoney=", DoubleToString(TakeProfit, 2),
+               " close=", DoubleToString(bid, Digits));
       }
    }
 }
 
 // INITIAL SELL TAKE PROFIT:
-// Only the original FIRST STEP SELL is closed by TakeProfit.
-// A SELL closes only when ASK reaches OpenPrice - TakeProfit.
-// No SELL is allowed to close before TakeProfit is reached.
+// TakeProfit is a MONETARY target in the account currency, not a price/point distance.
+// Only the original FIRST STEP SELL is closed by this rule.
+// The SELL remains open until OrderProfit() reaches TakeProfit.
 void ProcessSellTakeProfit()
 {
    if(TakeProfit <= 0.0) return;
@@ -227,30 +227,29 @@ void ProcessSellTakeProfit()
       if(OrderComment() != "EAGOLD FIRST STEP SELL") continue;
 
       RefreshRates();
-      double openPrice = OrderOpenPrice();
-      double target    = NormalizePrice(openPrice - PointsToPrice(TakeProfit));
 
-      if(Ask > target) continue;
+      double profit = OrderProfit();
+      if(profit < TakeProfit) continue;
 
-      int ticket        = OrderTicket();
-      double lots       = OrderLots();
-      double closePrice = NormalizePrice(Ask);
+      int ticket     = OrderTicket();
+      double lots    = OrderLots();
+      double ask     = NormalizePrice(Ask);
 
       ResetLastError();
-      if(!OrderClose(ticket, lots, closePrice, 0, clrNONE))
+      if(!OrderClose(ticket, lots, ask, 0, clrNONE))
       {
-         Print(EA_NAME, " INITIAL SELL TAKE PROFIT close failed. ticket=", ticket,
-               " open=", DoubleToString(openPrice, Digits),
-               " target=", DoubleToString(target, Digits),
-               " Ask=", DoubleToString(Ask, Digits),
+         Print(EA_NAME, " INITIAL SELL MONETARY TAKE PROFIT close failed. ticket=", ticket,
+               " profit=", DoubleToString(profit, 2),
+               " targetMoney=", DoubleToString(TakeProfit, 2),
+               " Ask=", DoubleToString(ask, Digits),
                " error=", GetLastError());
       }
       else
       {
-         Print(EA_NAME, " INITIAL SELL TAKE PROFIT. ticket=", ticket,
-               " open=", DoubleToString(openPrice, Digits),
-               " target=", DoubleToString(target, Digits),
-               " close=", DoubleToString(closePrice, Digits));
+         Print(EA_NAME, " INITIAL SELL MONETARY TAKE PROFIT. ticket=", ticket,
+               " profit=", DoubleToString(profit, 2),
+               " targetMoney=", DoubleToString(TakeProfit, 2),
+               " close=", DoubleToString(ask, Digits));
       }
    }
 }
@@ -344,9 +343,9 @@ void ProcessSellProgression()
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.012 initialized. FirstStep=", DoubleToString(FirstStep, 0),
+   Print(EA_NAME, " v0.013 initialized. FirstStep=", DoubleToString(FirstStep, 0),
          " PendingStepTrail=", DoubleToString(PendingStepTrail, 0),
-         " TakeProfit=", DoubleToString(TakeProfit, 2),
+         " TakeProfitMoney=", DoubleToString(TakeProfit, 2),
          " SmartGrid1=", DoubleToString(SmartGrid1, 0),
          " Lot=", DoubleToString(Lot, DigitsLots));
 
@@ -363,8 +362,8 @@ void OnTick()
    // Implemented behavior only:
    // 1. Rising price  -> ORIGINAL FIRST STEP SELL STOP may move UP only.
    // 2. Falling price -> BUY STOP may move DOWN only.
-   // 3. INITIAL BUY   -> closes ONLY at TakeProfit.
-   // 4. INITIAL SELL  -> closes ONLY at TakeProfit.
+   // 3. INITIAL BUY   -> closes ONLY when monetary TakeProfit is reached.
+   // 4. INITIAL SELL  -> closes ONLY when monetary TakeProfit is reached.
    // 5. Open SELL + FirstStep adverse move -> fixed next SELL STOP at SmartGrid1.
    // 6. SELL progression pending orders do NOT trail and are not closed by this TP rule.
    // All other parameters remain intentionally inactive.
