@@ -1,6 +1,6 @@
 #property strict
 #property indicator_chart_window
-#property version   "1.000"
+#property version   "1.001"
 #property description "EAGOLD - Basket / Profit / Exposure Monitor"
 
 input int    MagicNumber       = 1001;
@@ -135,10 +135,13 @@ void SetLabel(string name,string text,int row)
 
 void DeletePanel()
 {
-   for(int i=ObjectsTotal(0)-1;i>=0;i--)
+   // Use the parameterless legacy form to avoid the ObjectsTotal overload
+   // ambiguity present in some MT4 compiler builds.
+   int totalObjects=ObjectsTotal();
+   for(int i=totalObjects-1;i>=0;i--)
    {
-      string name=ObjectName(0,i);
-      if(StringFind(name,PREFIX,0)==0) ObjectDelete(0,name);
+      string name=ObjectName(i);
+      if(StringFind(name,PREFIX,0)==0) ObjectDelete(name);
    }
 }
 
