@@ -49,7 +49,7 @@ int CountOrdersByType(int type)
    return(count);
 }
 int CountDirectionPositions(int direction){ return(CountOrdersByType(direction==OP_BUY?OP_BUY:OP_SELL)); }
-int CountDirectionPending(int direction){ return(CountOrdersByType(direction==OP_BUY?OP_BUYSTOP:OP_SELLSTOP); }
+int CountDirectionPending(int direction){ return(CountOrdersByType(direction==OP_BUY?OP_BUYSTOP:OP_SELLSTOP)); }
 int CountEAGOLDOrders()
 {
    int count=0;
@@ -221,8 +221,6 @@ void SellRecovery()
    SendPending(OP_SELLSTOP,newStop,nextLot,"EAGOLD SELL RECOVERY");
 }
 
-// R6: only recovery STOPs. Trigger at 2x SmartGrid1, then trail at
-// RecoveryMinDistance, with a minimum favorable modification of 50 points.
 void TrailRecoveryStopOrders()
 {
    if(SmartGrid1<=0.0 || RecoveryMinDistance<=0.0 || PendingStepTrail<=0.0) return;
@@ -395,11 +393,6 @@ bool SellBasketClose()
    return(true);
 }
 
-// ============================================================
-// RULE 8 - AFTER A COMPLETE BASKET CLOSURE, RESTART THAT SAME SIDE
-// The opposite basket is irrelevant. The new order is a STOP using
-// the dedicated BasketRestartStep and initial Lot.
-// ============================================================
 void RestartEmptyBasket(int direction)
 {
    if(BasketRestartStep<=0.0) return;
