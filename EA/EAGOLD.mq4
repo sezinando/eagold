@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.058"
+#property version   "0.059"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 7"
 
 input int    MagicNumber              = 1001;
@@ -145,9 +145,13 @@ void SellCreateFirstOrder()
 // ============================================================
 // RULE 2 + RULE 3 - RECOVERY
 // R2 is evaluated from the LAST ACTIVATED market position.
-// Spread rule: the trigger uses the requested directional formula.
-// SELL: (Bid - lastPrice) + Spread > 2x SmartGrid1.
-// BUY : (lastPrice - Ask) + Spread > 2x SmartGrid1.
+// Spread rule: the adverse price distance is measured first,
+// then the current spread is subtracted from that distance.
+// SELL: (Ask - lastPrice) - Spread > 2x SmartGrid1.
+// BUY : (lastPrice - Bid) - Spread > 2x SmartGrid1.
+// Equivalent market-side form:
+// SELL: Bid - lastPrice > 2x SmartGrid1.
+// BUY : lastPrice - Ask > 2x SmartGrid1.
 // The Recovery STOP itself remains 1x SmartGrid1 from the last position.
 // ============================================================
 bool GetLatestActivatedPosition(int direction, double &latestPrice, double &latestLot, int &latestTicket)
@@ -207,7 +211,7 @@ void BuyRecovery()
 
    RefreshRates();
    double spread = CurrentSpreadPrice();
-   double effectiveDistance = lastPrice - Ask + spread;
+   double effectiveDistance = lastPrice - Bid - spread;
    double requiredDistance = PointsToPrice(2.0 * SmartGrid1);
 
    if(effectiveDistance <= requiredDistance) return;
@@ -253,7 +257,7 @@ void SellRecovery()
 
    RefreshRates();
    double spread = CurrentSpreadPrice();
-   double effectiveDistance = Bid - lastPrice + spread;
+   double effectiveDistance = Ask - lastPrice - spread;
    double requiredDistance = PointsToPrice(2.0 * SmartGrid1);
 
    if(effectiveDistance <= requiredDistance) return;
@@ -491,7 +495,7 @@ void SellMachine()
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.058 initialized. R1 unchanged; R2 uses directional distance plus spread; R6 unchanged; R7 unchanged. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
+   Print(EA_NAME, " v0.059 initialized. R1 unchanged; R2 uses adverse distance minus spread; R6 unchanged; R7 unchanged. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
    BuyCreateFirstOrder();
    SellCreateFirstOrder();
    return(INIT_SUCCEEDED);
