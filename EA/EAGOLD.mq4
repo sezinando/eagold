@@ -1,6 +1,6 @@
 #property strict
-#property version   "0.011"
-#property description "EAGOLD - FirstStep, directional trailing, BUY TP and SELL progression state anchor"
+#property version   "0.012"
+#property description "EAGOLD - FirstStep, directional trailing, initial BUY/SELL TakeProfit and SELL progression"
 
 input int    MagicNumber              = 1001;
 input double Lot                      = 0.01;
@@ -24,13 +24,6 @@ input bool   EnableCloseBy            = false;
 input double BuyProgressionTolerance  = 10.0;
 
 string EA_NAME = "EAGOLD";
-
-// SELL progression state.
-// The anchor is the actual price of the most recently ACTIVATED SELL.
-// It is deliberately not recalculated from arbitrary historical SELLs on every tick.
-int    g_sellAnchorTicket = -1;
-double g_sellAnchorPrice  = 0.0;
-
 
 double PointsToPrice(double points){ return(points * Point); }
 double NormalizePrice(double price){ return(NormalizeDouble(price, Digits)); }
@@ -73,8 +66,7 @@ int SendPending(int type, double price, string comment)
       Print(EA_NAME, " pending created. ticket=", ticket,
             " type=", type,
             " price=", DoubleToString(price, Digits),
-            " lot=", DoubleToString(Lot, DigitsLots),
-            " comment=", comment);
+            " lot=", DoubleToString(Lot, DigitsLots));
 
    return(ticket);
 }
@@ -178,8 +170,9 @@ void TrailSellStop()
    }
 }
 
-// BUY TAKE PROFIT:
-// Close each open BUY when BID reaches OpenPrice + TakeProfit.
+// INITIAL BUY TAKE PROFIT:
+// Only the original FIRST STEP BUY is closed by TakeProfit.
+// No other BUY management is active at this stage.
 void ProcessBuyTakeProfit()
 {
    if(TakeProfit <= 0.0) return;
@@ -188,6 +181,7 @@ void ProcessBuyTakeProfit()
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType() != OP_BUY) continue;
+      if(OrderComment() != "EAGOLD FIRST STEP BUY") continue;
 
       RefreshRates();
       double openPrice = OrderOpenPrice();
@@ -202,7 +196,7 @@ void ProcessBuyTakeProfit()
       ResetLastError();
       if(!OrderClose(ticket, lots, closePrice, 0, clrNONE))
       {
-         Print(EA_NAME, " BUY TAKE PROFIT close failed. ticket=", ticket,
+         Print(EA_NAME, " INITIAL BUY TAKE PROFIT close failed. ticket=", ticket,
                " open=", DoubleToString(openPrice, Digits),
                " target=", DoubleToString(target, Digits),
                " Bid=", DoubleToString(Bid, Digits),
@@ -210,7 +204,7 @@ void ProcessBuyTakeProfit()
       }
       else
       {
-         Print(EA_NAME, " BUY TAKE PROFIT. ticket=", ticket,
+         Print(EA_NAME, " INITIAL BUY TAKE PROFIT. ticket=", ticket,
                " open=", DoubleToString(openPrice, Digits),
                " target=", DoubleToString(target, Digits),
                " close=", DoubleToString(closePrice, Digits));
@@ -218,117 +212,131 @@ void ProcessBuyTakeProfit()
    }
 }
 
-// Find the most recently activated SELL currently open.
-// Ticket is used as the tie-breaker when several SELLs are opened in the same second.
-bool FindLatestOpenSell(int &ticket, double &openPrice, datetime &openTime)
+// INITIAL SELL TAKE PROFIT:
+// Only the original FIRST STEP SELL is closed by TakeProfit.
+// A SELL closes only when ASK reaches OpenPrice - TakeProfit.
+// No SELL is allowed to close before TakeProfit is reached.
+void ProcessSellTakeProfit()
 {
-   ticket   = -1;
-   openPrice = 0.0;
-   openTime = 0;
-   bool found = false;
+   if(TakeProfit <= 0.0) return;
+
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder() || OrderType() != OP_SELL) continue;
+      if(OrderComment() != "EAGOLD FIRST STEP SELL") continue;
+
+      RefreshRates();
+      double openPrice = OrderOpenPrice();
+      double target    = NormalizePrice(openPrice - PointsToPrice(TakeProfit));
+
+      if(Ask > target) continue;
+
+      int ticket        = OrderTicket();
+      double lots       = OrderLots();
+      double closePrice = NormalizePrice(Ask);
+
+      ResetLastError();
+      if(!OrderClose(ticket, lots, closePrice, 0, clrNONE))
+      {
+         Print(EA_NAME, " INITIAL SELL TAKE PROFIT close failed. ticket=", ticket,
+               " open=", DoubleToString(openPrice, Digits),
+               " target=", DoubleToString(target, Digits),
+               " Ask=", DoubleToString(Ask, Digits),
+               " error=", GetLastError());
+      }
+      else
+      {
+         Print(EA_NAME, " INITIAL SELL TAKE PROFIT. ticket=", ticket,
+               " open=", DoubleToString(openPrice, Digits),
+               " target=", DoubleToString(target, Digits),
+               " close=", DoubleToString(closePrice, Digits));
+      }
+   }
+}
+
+// Return the most recently activated SELL.
+// Open time is the primary criterion. Ticket is the tie-breaker when multiple
+// SELLs are opened within the same second, which can happen in fast backtests.
+bool GetLatestSell(double &latestSellOpen, int &latestSellTicket)
+{
+   latestSellOpen   = 0.0;
+   latestSellTicket = -1;
+   datetime latestSellTime = 0;
+   bool foundSell = false;
 
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(!IsEAGOLDOrder() || OrderType() != OP_SELL) continue;
 
-      int t = OrderTicket();
-      datetime ot = OrderOpenTime();
+      datetime openTime = OrderOpenTime();
+      int ticket = OrderTicket();
 
-      if(!found || ot > openTime || (ot == openTime && t > ticket))
+      if(!foundSell ||
+         openTime > latestSellTime ||
+         (openTime == latestSellTime && ticket > latestSellTicket))
       {
-         found = true;
-         ticket = t;
-         openPrice = OrderOpenPrice();
-         openTime = ot;
+         foundSell = true;
+         latestSellTime = openTime;
+         latestSellOpen = OrderOpenPrice();
+         latestSellTicket = ticket;
       }
    }
 
-   return(found);
+   return(foundSell);
 }
 
-// Synchronize the progression anchor with the most recently ACTIVATED SELL.
-// This happens only when a new SELL ticket appears, not on every tick.
-void UpdateSellAnchor()
-{
-   int latestTicket = -1;
-   double latestPrice = 0.0;
-   datetime latestTime = 0;
-
-   if(!FindLatestOpenSell(latestTicket, latestPrice, latestTime))
-      return;
-
-   if(latestTicket == g_sellAnchorTicket)
-      return;
-
-   g_sellAnchorTicket = latestTicket;
-   g_sellAnchorPrice  = latestPrice;
-
-   Print(EA_NAME,
-         " SELL ANCHOR UPDATED. ticket=", g_sellAnchorTicket,
-         " entry=", DoubleToString(g_sellAnchorPrice, Digits));
-}
-
-// SELL PROGRESSION — STRICT RULE:
-//
-// 1. A SELL must first be ACTIVATED.
-// 2. Its actual execution price becomes the anchor.
-// 3. The market must move FirstStep points ABOVE that exact anchor.
-// 4. ONLY THEN is a new SELL STOP created.
-// 5. The new SELL STOP is fixed at anchor + SmartGrid1.
-// 6. The progression pending is never trailed.
-// 7. Once that pending is activated, its execution price becomes the new anchor.
+// SELL PROGRESSION:
+// A new progression SELL STOP may be created ONLY after the price has moved
+// FirstStep points AGAINST THE MOST RECENTLY ACTIVATED SELL.
+// The reference is the actual open price of that SELL.
+// The new SELL STOP is then fixed at latest SELL open + SmartGrid1.
 void ProcessSellProgression()
 {
    if(FirstStep <= 0.0 || SmartGrid1 <= 0.0) return;
 
-   // First detect whether a new SELL was actually activated.
-   UpdateSellAnchor();
-
-   // Without an actual SELL anchor there is no progression.
-   if(g_sellAnchorTicket < 0 || g_sellAnchorPrice <= 0.0)
+   // Never create another progression while one is already pending.
+   if(CountOrders(OP_SELLSTOP) > 0)
       return;
 
-   // Never create another progression while one SELL STOP is already pending.
-   if(CountOrders(OP_SELLSTOP) > 0)
+   double latestSellOpen = 0.0;
+   int latestSellTicket = -1;
+
+   if(!GetLatestSell(latestSellOpen, latestSellTicket))
       return;
 
    RefreshRates();
 
-   // Use the chart-side BID as the market reference.
-   // Distance is explicitly calculated in broker points from the actual SELL entry.
-   double distancePoints = (Bid - g_sellAnchorPrice) / Point;
-   double triggerPrice   = NormalizePrice(g_sellAnchorPrice + PointsToPrice(FirstStep));
+   // For a SELL, adverse movement is an increase in BID.
+   // The trigger is EXACTLY FirstStep above the actual latest SELL entry.
+   double triggerPrice = NormalizePrice(latestSellOpen + PointsToPrice(FirstStep));
 
-   // STRICT: less than FirstStep means absolutely nothing happens.
-   if(distancePoints < FirstStep)
+   if(Bid < triggerPrice)
       return;
 
-   // Place the next SELL STOP only after the complete FirstStep distance has been reached.
-   double newSellStop = NormalizePrice(g_sellAnchorPrice + PointsToPrice(SmartGrid1));
+   // Only after the trigger has been reached do we place the next SELL STOP.
+   double newSellStop = NormalizePrice(latestSellOpen + PointsToPrice(SmartGrid1));
 
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
    if(newSellStop >= Bid - stopLevel)
    {
       Print(EA_NAME,
-            " SELL progression waiting: region too close to BID. anchorTicket=",
-            g_sellAnchorTicket,
-            " anchor=", DoubleToString(g_sellAnchorPrice, Digits),
-            " Bid=", DoubleToString(Bid, Digits),
-            " distancePoints=", DoubleToString(distancePoints, 1),
-            " required=", DoubleToString(FirstStep, 1),
+            " SELL progression waiting: new SELL STOP too close to BID. latestTicket=",
+            latestSellTicket,
+            " latestSell=", DoubleToString(latestSellOpen, Digits),
             " trigger=", DoubleToString(triggerPrice, Digits),
+            " Bid=", DoubleToString(Bid, Digits),
             " newStop=", DoubleToString(newSellStop, Digits));
       return;
    }
 
    Print(EA_NAME,
-         " SELL PROGRESSION TRIGGERED. anchorTicket=", g_sellAnchorTicket,
-         " anchor=", DoubleToString(g_sellAnchorPrice, Digits),
+         " SELL PROGRESSION TRIGGERED. latestTicket=", latestSellTicket,
+         " latestSell=", DoubleToString(latestSellOpen, Digits),
          " Bid=", DoubleToString(Bid, Digits),
-         " distancePoints=", DoubleToString(distancePoints, 1),
-         " required=", DoubleToString(FirstStep, 1),
          " trigger=", DoubleToString(triggerPrice, Digits),
+         " distance=", DoubleToString((Bid - latestSellOpen) / Point, 1),
          " newSELLSTOP=", DoubleToString(newSellStop, Digits));
 
    SendPending(OP_SELLSTOP, newSellStop, "EAGOLD SELL PROGRESSION");
@@ -336,15 +344,11 @@ void ProcessSellProgression()
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.011 initialized. FirstStep=", DoubleToString(FirstStep, 0),
+   Print(EA_NAME, " v0.012 initialized. FirstStep=", DoubleToString(FirstStep, 0),
          " PendingStepTrail=", DoubleToString(PendingStepTrail, 0),
          " TakeProfit=", DoubleToString(TakeProfit, 2),
          " SmartGrid1=", DoubleToString(SmartGrid1, 0),
          " Lot=", DoubleToString(Lot, DigitsLots));
-
-   // If the EA is attached/restarted while SELLs already exist,
-   // establish the anchor from the most recently activated SELL once.
-   UpdateSellAnchor();
 
    CreateFirstStepOrders();
    return(INIT_SUCCEEDED);
@@ -359,11 +363,14 @@ void OnTick()
    // Implemented behavior only:
    // 1. Rising price  -> ORIGINAL FIRST STEP SELL STOP may move UP only.
    // 2. Falling price -> BUY STOP may move DOWN only.
-   // 3. Open BUY      -> close at TakeProfit.
-   // 4. Open SELL + STRICT FirstStep adverse move -> fixed next SELL STOP at SmartGrid1.
-   // 5. SELL progression pending orders do NOT trail.
+   // 3. INITIAL BUY   -> closes ONLY at TakeProfit.
+   // 4. INITIAL SELL  -> closes ONLY at TakeProfit.
+   // 5. Open SELL + FirstStep adverse move -> fixed next SELL STOP at SmartGrid1.
+   // 6. SELL progression pending orders do NOT trail and are not closed by this TP rule.
+   // All other parameters remain intentionally inactive.
    TrailSellStop();
    TrailBuyStop();
    ProcessBuyTakeProfit();
+   ProcessSellTakeProfit();
    ProcessSellProgression();
 }
