@@ -1,6 +1,6 @@
 #property strict
-#property version   "0.017"
-#property description "EAGOLD - buy reentry after close"
+#property version   "0.018"
+#property description "EAGOLD - sell stop activation distance fix"
 
 input int    MagicNumber              = 1001;
 input double Lot                      = 0.01;
@@ -256,9 +256,11 @@ bool GetLatestSell(double &latestSellOpen, int &latestSellTicket)
 }
 
 // SELL PROGRESSION:
-// Latest SELL at LastSell.
-// Price moves 2 x SmartGrid1 against it.
-// Then create SELL STOP at LastSell + SmartGrid1.
+// The latest activated SELL is the reference (LastSell).
+// A progression SELL STOP is created only when price reaches
+// LastSell + 2 x SmartGrid1.
+// Therefore the SELL STOP itself is placed at the 2 x SmartGrid1
+// activation level and cannot be triggered earlier.
 void ProcessSellProgression()
 {
    if(SmartGrid1 <= 0.0) return;
@@ -274,9 +276,13 @@ void ProcessSellProgression()
    double triggerDistance = PointsToPrice(2.0 * SmartGrid1);
    double triggerPrice = NormalizePrice(latestSellOpen + triggerDistance);
 
+   // The progression is not even created until price reaches
+   // the 2 x SmartGrid1 adverse-distance from LastSell.
    if(Bid < triggerPrice) return;
 
-   double newSellStop = NormalizePrice(latestSellOpen + PointsToPrice(SmartGrid1));
+   // IMPORTANT: the pending SELL STOP is placed at the same
+   // 2 x SmartGrid1 level. It must never be placed at +SmartGrid1.
+   double newSellStop = triggerPrice;
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
 
    if(newSellStop >= Bid - stopLevel)
@@ -286,7 +292,8 @@ void ProcessSellProgression()
          " SELL PROGRESSION TRIGGERED. latestTicket=", latestSellTicket,
          " latestSell=", DoubleToString(latestSellOpen, Digits),
          " Bid=", DoubleToString(Bid, Digits),
-         " trigger=", DoubleToString(triggerPrice, Digits),
+         " triggerDistance=", DoubleToString(2.0 * SmartGrid1, 0),
+         " triggerPrice=", DoubleToString(triggerPrice, Digits),
          " newSELLSTOP=", DoubleToString(newSellStop, Digits));
 
    SendPending(OP_SELLSTOP, newSellStop, "EAGOLD SELL PROGRESSION");
@@ -385,7 +392,7 @@ void ProcessBuyReentryAfterClose()
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.017 initialized. FirstStep=", DoubleToString(FirstStep, 0),
+   Print(EA_NAME, " v0.018 initialized. FirstStep=", DoubleToString(FirstStep, 0),
          " PendingStepTrail=", DoubleToString(PendingStepTrail, 0),
          " TakeProfitMoney=", DoubleToString(TakeProfit, 2),
          " SmartGrid1=", DoubleToString(SmartGrid1, 0),
