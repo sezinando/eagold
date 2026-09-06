@@ -1,6 +1,6 @@
 #property strict
-#property version   "0.016"
-#property description "EAGOLD - compile fix"
+#property version   "0.017"
+#property description "EAGOLD - buy reentry after close"
 
 input int    MagicNumber              = 1001;
 input double Lot                      = 0.01;
@@ -24,6 +24,9 @@ input bool   EnableCloseBy            = false;
 input double BuyProgressionTolerance  = 10.0;
 
 string EA_NAME = "EAGOLD";
+
+// Last BUY history ticket already processed by the reentry logic.
+int LastProcessedBuyCloseTicket = -1;
 
 double PointsToPrice(double points){ return(points * Point); }
 double NormalizePrice(double price){ return(NormalizeDouble(price, Digits)); }
@@ -289,15 +292,108 @@ void ProcessSellProgression()
    SendPending(OP_SELLSTOP, newSellStop, "EAGOLD SELL PROGRESSION");
 }
 
+// Initialize the close-ticket marker with the most recent historical BUY.
+// This prevents the EA from creating a new BUY because of an old closure
+// that happened before the EA was attached/restarted.
+void InitializeBuyCloseTracker()
+{
+   datetime latestCloseTime = 0;
+   int latestTicket = -1;
+
+   for(int i = OrdersHistoryTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) continue;
+      if(!IsEAGOLDOrder() || OrderType() != OP_BUY) continue;
+
+      datetime closeTime = OrderCloseTime();
+      int ticket = OrderTicket();
+
+      if(closeTime > latestCloseTime ||
+         (closeTime == latestCloseTime && ticket > latestTicket))
+      {
+         latestCloseTime = closeTime;
+         latestTicket = ticket;
+      }
+   }
+
+   LastProcessedBuyCloseTicket = latestTicket;
+}
+
+// BUY REENTRY:
+// When a BUY or BUY basket is closed, immediately create one BUY STOP
+// at MiniGrid1 points above the current ASK.
+// Only one reentry is created for the detected close event.
+void ProcessBuyReentryAfterClose()
+{
+   if(MiniGrid1 <= 0.0) return;
+
+   int latestClosedTicket = -1;
+   datetime latestCloseTime = 0;
+   double latestClosePrice = 0.0;
+   double latestLots = 0.0;
+   bool foundNewClose = false;
+
+   for(int i = OrdersHistoryTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) continue;
+      if(!IsEAGOLDOrder() || OrderType() != OP_BUY) continue;
+
+      int ticket = OrderTicket();
+      datetime closeTime = OrderCloseTime();
+
+      if(ticket == LastProcessedBuyCloseTicket) continue;
+      if(closeTime <= 0) continue;
+
+      if(!foundNewClose ||
+         closeTime > latestCloseTime ||
+         (closeTime == latestCloseTime && ticket > latestClosedTicket))
+      {
+         foundNewClose = true;
+         latestCloseTime = closeTime;
+         latestClosedTicket = ticket;
+         latestClosePrice = OrderClosePrice();
+         latestLots = OrderLots();
+      }
+   }
+
+   if(!foundNewClose) return;
+
+   LastProcessedBuyCloseTicket = latestClosedTicket;
+
+   // Do not stack multiple BUY STOP reentries for the same closure event.
+   if(CountOrders(OP_BUYSTOP) > 0)
+   {
+      Print(EA_NAME,
+            " BUY CLOSE DETECTED but BUY STOP already exists. ticket=",
+            latestClosedTicket);
+      return;
+   }
+
+   RefreshRates();
+   double newBuyStop = NormalizePrice(Ask + PointsToPrice(MiniGrid1));
+
+   Print(EA_NAME,
+         " BUY REENTRY TRIGGERED. closedTicket=", latestClosedTicket,
+         " closedPrice=", DoubleToString(latestClosePrice, Digits),
+         " closedLots=", DoubleToString(latestLots, DigitsLots),
+         " Ask=", DoubleToString(Ask, Digits),
+         " MiniGrid1=", DoubleToString(MiniGrid1, 0),
+         " newBUYSTOP=", DoubleToString(newBuyStop, Digits));
+
+   SendPending(OP_BUYSTOP, newBuyStop, "EAGOLD BUY REENTRY MINIGRID1");
+}
+
 int OnInit()
 {
-   Print(EA_NAME, " v0.016 initialized. FirstStep=", DoubleToString(FirstStep, 0),
+   Print(EA_NAME, " v0.017 initialized. FirstStep=", DoubleToString(FirstStep, 0),
          " PendingStepTrail=", DoubleToString(PendingStepTrail, 0),
          " TakeProfitMoney=", DoubleToString(TakeProfit, 2),
          " SmartGrid1=", DoubleToString(SmartGrid1, 0),
          " SELL trigger=", DoubleToString(2.0 * SmartGrid1, 0),
+         " MiniGrid1=", DoubleToString(MiniGrid1, 0),
          " Lot=", DoubleToString(Lot, DigitsLots));
 
+   InitializeBuyCloseTracker();
    CreateFirstStepOrders();
    return(INIT_SUCCEEDED);
 }
@@ -313,4 +409,5 @@ void OnTick()
    ProcessBuyTakeProfit();
    ProcessSellTakeProfit();
    ProcessSellProgression();
+   ProcessBuyReentryAfterClose();
 }
