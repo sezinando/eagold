@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.049"
+#property version   "0.050"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 7"
 
 input int    MagicNumber              = 1001;
@@ -266,9 +266,9 @@ void TrailRecoveryStopOrders()
 
 // ============================================================
 // RULE 7 - TRAILING OF R1 MARKET POSITIONS ONLY
-// R7: after favorable movement of 1x SmartGrid1 + PendingStepTrail,
-// advance the R1 StopLoss by exactly 1x PendingStepTrail.
-// The trailing reference remains 1x SmartGrid1 behind current price.
+// R7 starts after adverse movement of 1x SmartGrid1 + PendingStepTrail.
+// Each additional 1x PendingStepTrail advances the R1 StopLoss by
+// exactly 1x PendingStepTrail. The SL remains 1x SmartGrid1 from price.
 // ============================================================
 void TrailR1Positions()
 {
@@ -298,23 +298,23 @@ void TrailR1Positions()
 
       if(type == OP_BUY)
       {
-         double favorableMove = Bid - openPrice;
-         if(favorableMove < activationDistance) continue;
+         double adverseMove = openPrice - Bid;
+         if(adverseMove < activationDistance) continue;
 
-         desiredSL = NormalizePrice(Bid - trailDistance);
-         if(currentSL > 0.0 && desiredSL - currentSL < trailStep) continue;
-         if(desiredSL >= Bid - stopLevel) continue;
-         if(currentSL > 0.0 && desiredSL <= currentSL) continue;
+         desiredSL = NormalizePrice(Bid + trailDistance);
+         if(currentSL > 0.0 && currentSL - desiredSL < trailStep) continue;
+         if(desiredSL <= Bid + stopLevel) continue;
+         if(currentSL > 0.0 && desiredSL >= currentSL) continue;
       }
       else
       {
-         double favorableMove = openPrice - Ask;
-         if(favorableMove < activationDistance) continue;
+         double adverseMove = Ask - openPrice;
+         if(adverseMove < activationDistance) continue;
 
-         desiredSL = NormalizePrice(Ask + trailDistance);
-         if(currentSL > 0.0 && currentSL - desiredSL < trailStep) continue;
-         if(desiredSL <= Ask + stopLevel) continue;
-         if(currentSL > 0.0 && desiredSL >= currentSL) continue;
+         desiredSL = NormalizePrice(Ask - trailDistance);
+         if(currentSL > 0.0 && desiredSL - currentSL < trailStep) continue;
+         if(desiredSL >= Ask - stopLevel) continue;
+         if(currentSL > 0.0 && desiredSL <= currentSL) continue;
       }
 
       int ticket = OrderTicket();
@@ -425,7 +425,7 @@ void SellMachine(){ SellBasketClose(); SellSingleTakeProfit(); SellRecovery(); S
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.049 initialized. R1=FirstStep; R6=R2 recovery STOP trailing; R7=R1 position trailing with SmartGrid1+PendingStepTrail activation and PendingStepTrail increments. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
+   Print(EA_NAME, " v0.050 initialized. R1=FirstStep; R6=R2 recovery STOP trailing; R7=R1 adverse trailing with SmartGrid1+PendingStepTrail activation and PendingStepTrail increments. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
    BuyCreateFirstOrder();
    SellCreateFirstOrder();
    return(INIT_SUCCEEDED);
