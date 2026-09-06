@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.060"
+#property version   "0.061"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 7"
 
 input int    MagicNumber              = 1001;
@@ -130,10 +130,6 @@ bool CloseMarketOrder(int ticket)
 
 // ============================================================
 // RULE 1 - FIRST STOP ORDERS / NEW CYCLE WHEN COMPLETELY FLAT
-// R1 creates one BUY STOP and one SELL STOP whenever EAGOLD has
-// no open market positions and no pending orders at all.
-// If the complete EAGOLD cycle is closed, the next tick starts a
-// new cycle with both first orders.
 // ============================================================
 void CreateFirstOrdersIfFlat()
 {
@@ -151,14 +147,12 @@ void CreateFirstOrdersIfFlat()
 // ============================================================
 // RULE 2 + RULE 3 - RECOVERY
 // R2 is evaluated from the LAST ACTIVATED market position.
-// Spread rule: the adverse price distance is measured first,
-// then the current spread is subtracted from that distance.
-// SELL: (Ask - lastPrice) - Spread > 2x SmartGrid1.
-// BUY : (lastPrice - Bid) - Spread > 2x SmartGrid1.
-// Equivalent market-side form:
-// SELL: Bid - lastPrice > 2x SmartGrid1.
-// BUY : lastPrice - Ask > 2x SmartGrid1.
-// The Recovery STOP itself remains 1x SmartGrid1 from the last position.
+// Confirmed from ZEUS Journal/tick analysis for the SELL side:
+// SELL trigger: Bid - last activated SELL price >= 2x SmartGrid1.
+// SELL recovery STOP: Bid - 1x SmartGrid1.
+// BUY is implemented as the directional mirror and remains to be
+// confirmed independently from a BUY-side recovery event.
+// No explicit spread subtraction is applied in the R2 trigger.
 // ============================================================
 bool GetLatestActivatedPosition(int direction, double &latestPrice, double &latestLot, int &latestTicket)
 {
@@ -216,13 +210,12 @@ void BuyRecovery()
    if(!GetLatestActivatedPosition(OP_BUY, lastPrice, lastLot, lastTicket)) return;
 
    RefreshRates();
-   double spread = CurrentSpreadPrice();
-   double effectiveDistance = lastPrice - Bid - spread;
+   double distance = lastPrice - Ask;
    double requiredDistance = PointsToPrice(2.0 * SmartGrid1);
 
-   if(effectiveDistance <= requiredDistance) return;
+   if(distance < requiredDistance) return;
 
-   double newStop = NormalizePrice(lastPrice - PointsToPrice(SmartGrid1));
+   double newStop = NormalizePrice(Ask + PointsToPrice(SmartGrid1));
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
    if(newStop <= Ask + stopLevel)
    {
@@ -230,8 +223,7 @@ void BuyRecovery()
             " lastPrice=", DoubleToString(lastPrice, Digits),
             " Bid=", DoubleToString(Bid, Digits),
             " Ask=", DoubleToString(Ask, Digits),
-            " spread=", DoubleToString(spread, Digits),
-            " effectiveDistance=", DoubleToString(effectiveDistance, Digits),
+            " distance=", DoubleToString(distance, Digits),
             " required=", DoubleToString(requiredDistance, Digits),
             " stop=", DoubleToString(newStop, Digits));
       return;
@@ -243,8 +235,7 @@ void BuyRecovery()
          " lastLot=", DoubleToString(lastLot, DigitsLots),
          " Bid=", DoubleToString(Bid, Digits),
          " Ask=", DoubleToString(Ask, Digits),
-         " spread=", DoubleToString(spread, Digits),
-         " effectiveDistance=", DoubleToString(effectiveDistance, Digits),
+         " distance=", DoubleToString(distance, Digits),
          " required=", DoubleToString(requiredDistance, Digits),
          " stop=", DoubleToString(newStop, Digits),
          " nextLot=", DoubleToString(nextLot, DigitsLots));
@@ -262,13 +253,12 @@ void SellRecovery()
    if(!GetLatestActivatedPosition(OP_SELL, lastPrice, lastLot, lastTicket)) return;
 
    RefreshRates();
-   double spread = CurrentSpreadPrice();
-   double effectiveDistance = Ask - lastPrice - spread;
+   double distance = Bid - lastPrice;
    double requiredDistance = PointsToPrice(2.0 * SmartGrid1);
 
-   if(effectiveDistance <= requiredDistance) return;
+   if(distance < requiredDistance) return;
 
-   double newStop = NormalizePrice(lastPrice + PointsToPrice(SmartGrid1));
+   double newStop = NormalizePrice(Bid - PointsToPrice(SmartGrid1));
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
    if(newStop >= Bid - stopLevel)
    {
@@ -276,8 +266,7 @@ void SellRecovery()
             " lastPrice=", DoubleToString(lastPrice, Digits),
             " Bid=", DoubleToString(Bid, Digits),
             " Ask=", DoubleToString(Ask, Digits),
-            " spread=", DoubleToString(spread, Digits),
-            " effectiveDistance=", DoubleToString(effectiveDistance, Digits),
+            " distance=", DoubleToString(distance, Digits),
             " required=", DoubleToString(requiredDistance, Digits),
             " stop=", DoubleToString(newStop, Digits));
       return;
@@ -289,8 +278,7 @@ void SellRecovery()
          " lastLot=", DoubleToString(lastLot, DigitsLots),
          " Bid=", DoubleToString(Bid, Digits),
          " Ask=", DoubleToString(Ask, Digits),
-         " spread=", DoubleToString(spread, Digits),
-         " effectiveDistance=", DoubleToString(effectiveDistance, Digits),
+         " distance=", DoubleToString(distance, Digits),
          " required=", DoubleToString(requiredDistance, Digits),
          " stop=", DoubleToString(newStop, Digits),
          " nextLot=", DoubleToString(nextLot, DigitsLots));
@@ -499,7 +487,7 @@ void SellMachine()
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.060 initialized. R1 restarts whenever completely flat; R2 uses adverse distance minus spread; R6 unchanged; R7 unchanged. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
+   Print(EA_NAME, " v0.061 initialized. R2 updated from ZEUS Journal: trigger >= 2x SmartGrid1, no explicit spread subtraction, recovery STOP at current market +/- SmartGrid1. R2 BUY remains mirror hypothesis pending independent BUY validation. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
    CreateFirstOrdersIfFlat();
    return(INIT_SUCCEEDED);
 }
