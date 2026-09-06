@@ -1,6 +1,6 @@
 #property strict
-#property version   "0.015"
-#property description "EAGOLD - FirstStep, directional trailing, monetary TakeProfit and SELL progression"
+#property version   "0.016"
+#property description "EAGOLD - compile fix"
 
 input int    MagicNumber              = 1001;
 input double Lot                      = 0.01;
@@ -86,12 +86,6 @@ void CreateFirstStepOrders()
    double buyPrice  = NormalizePrice(Ask + PointsToPrice(FirstStep));
    double sellPrice = NormalizePrice(Bid - PointsToPrice(FirstStep));
 
-   Print(EA_NAME, " FIRST STEP. BID=", DoubleToString(Bid, Digits),
-         " ASK=", DoubleToString(Ask, Digits),
-         " FirstStep=", DoubleToString(FirstStep, 0),
-         " BUY STOP=", DoubleToString(buyPrice, Digits),
-         " SELL STOP=", DoubleToString(sellPrice, Digits));
-
    SendPending(OP_BUYSTOP, buyPrice, "EAGOLD FIRST STEP BUY");
    SendPending(OP_SELLSTOP, sellPrice, "EAGOLD FIRST STEP SELL");
 }
@@ -128,10 +122,6 @@ void TrailBuyStop()
    }
 }
 
-// SELL STOP directional trailing applies to both the original FIRST STEP
-// SELL STOP and SELL PROGRESSION pending orders.
-// The rule is identical: while price rises, a SELL STOP may only move UP,
-// never DOWN, and only after PendingStepTrail points of movement.
 void TrailSellStop()
 {
    for(int i = OrdersTotal() - 1; i >= 0; i--)
@@ -191,20 +181,14 @@ void ProcessBuyTakeProfit()
 
       ResetLastError();
       if(!OrderClose(ticket, lots, bid, 0, clrNONE))
-      {
          Print(EA_NAME, " INITIAL BUY MONETARY TAKE PROFIT close failed. ticket=", ticket,
                " profit=", DoubleToString(profit, 2),
                " targetMoney=", DoubleToString(TakeProfit, 2),
-               " Bid=", DoubleToString(bid, Digits),
                " error=", GetLastError());
-      }
       else
-      {
          Print(EA_NAME, " INITIAL BUY MONETARY TAKE PROFIT. ticket=", ticket,
                " profit=", DoubleToString(profit, 2),
-               " targetMoney=", DoubleToString(TakeProfit, 2),
-               " close=", DoubleToString(bid, Digits));
-      }
+               " targetMoney=", DoubleToString(TakeProfit, 2));
    }
 }
 
@@ -228,20 +212,14 @@ void ProcessSellTakeProfit()
 
       ResetLastError();
       if(!OrderClose(ticket, lots, ask, 0, clrNONE))
-      {
          Print(EA_NAME, " INITIAL SELL MONETARY TAKE PROFIT close failed. ticket=", ticket,
                " profit=", DoubleToString(profit, 2),
                " targetMoney=", DoubleToString(TakeProfit, 2),
-               " Ask=", DoubleToString(ask, Digits),
                " error=", GetLastError());
-      }
       else
-      {
          Print(EA_NAME, " INITIAL SELL MONETARY TAKE PROFIT. ticket=", ticket,
                " profit=", DoubleToString(profit, 2),
-               " targetMoney=", DoubleToString(TakeProfit, 2),
-               " close=", DoubleToString(ask, Digits));
-      }
+               " targetMoney=", DoubleToString(TakeProfit, 2));
    }
 }
 
@@ -275,54 +253,37 @@ bool GetLatestSell(double &latestSellOpen, int &latestSellTicket)
 }
 
 // SELL PROGRESSION:
-// After the latest activated SELL, the price must move 2 x SmartGrid1
-// AGAINST that SELL before a new SELL STOP is created.
-// The new SELL STOP is placed at exactly latest SELL + SmartGrid1.
-// Example with SmartGrid1=80:
-// SELL at 5000 -> trigger at 5160 -> new SELL STOP at 5080.
+// Latest SELL at LastSell.
+// Price moves 2 x SmartGrid1 against it.
+// Then create SELL STOP at LastSell + SmartGrid1.
 void ProcessSellProgression()
 {
    if(SmartGrid1 <= 0.0) return;
-
-   // Never create another progression while a SELL STOP is already pending.
-   if(CountOrders(OP_SELLSTOP) > 0)
-      return;
+   if(CountOrders(OP_SELLSTOP) > 0) return;
 
    double latestSellOpen = 0.0;
    int latestSellTicket = -1;
 
-   if(!GetLatestSell(latestSellOpen, latestSellTicket))
-      return;
+   if(!GetLatestSell(latestSellOpen, latestSellTicket)) return;
 
    RefreshRates();
 
    double triggerDistance = PointsToPrice(2.0 * SmartGrid1);
    double triggerPrice = NormalizePrice(latestSellOpen + triggerDistance);
 
-   if(Bid < triggerPrice)
-      return;
+   if(Bid < triggerPrice) return;
 
    double newSellStop = NormalizePrice(latestSellOpen + PointsToPrice(SmartGrid1));
-
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
+
    if(newSellStop >= Bid - stopLevel)
-   {
-      Print(EA_NAME,
-            " SELL progression waiting: new SELL STOP too close to BID. latestTicket=",
-            latestSellTicket,
-            " latestSell=", DoubleToString(latestSellOpen, Digits),
-            " trigger=", DoubleToString(triggerPrice, Digits),
-            " Bid=", DoubleToString(Bid, Digits),
-            " newStop=", DoubleToString(newSellStop, Digits));
       return;
-   }
 
    Print(EA_NAME,
          " SELL PROGRESSION TRIGGERED. latestTicket=", latestSellTicket,
          " latestSell=", DoubleToString(latestSellOpen, Digits),
          " Bid=", DoubleToString(Bid, Digits),
          " trigger=", DoubleToString(triggerPrice, Digits),
-         " triggerDistance=", DoubleToString((Bid - latestSellOpen) / Point, 1),
          " newSELLSTOP=", DoubleToString(newSellStop, Digits));
 
    SendPending(OP_SELLSTOP, newSellStop, "EAGOLD SELL PROGRESSION");
@@ -330,7 +291,7 @@ void ProcessSellProgression()
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.015 initialized. FirstStep=", DoubleToString(FirstStep, 0),
+   Print(EA_NAME, " v0.016 initialized. FirstStep=", DoubleToString(FirstStep, 0),
          " PendingStepTrail=", DoubleToString(PendingStepTrail, 0),
          " TakeProfitMoney=", DoubleToString(TakeProfit, 2),
          " SmartGrid1=", DoubleToString(SmartGrid1, 0),
