@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.014"
+#property version   "0.015"
 #property description "EAGOLD - FirstStep, directional trailing, monetary TakeProfit and SELL progression"
 
 input int    MagicNumber              = 1001;
@@ -71,9 +71,6 @@ int SendPending(int type, double price, string comment)
    return(ticket);
 }
 
-// FIRST STEP:
-// BUY STOP  = ASK + FirstStep
-// SELL STOP = BID - FirstStep
 void CreateFirstStepOrders()
 {
    int total = 0;
@@ -99,9 +96,6 @@ void CreateFirstStepOrders()
    SendPending(OP_SELLSTOP, sellPrice, "EAGOLD FIRST STEP SELL");
 }
 
-// BUY STOP can only move DOWN.
-// It follows a falling ASK while preserving FirstStep distance.
-// It NEVER moves back UP.
 void TrailBuyStop()
 {
    for(int i = OrdersTotal() - 1; i >= 0; i--)
@@ -123,7 +117,7 @@ void TrailBuyStop()
 
       ResetLastError();
       if(!OrderModify(OrderTicket(), desired, 0, 0, 0, clrNONE))
-         Print(EAGOLD, " BUY STOP modify failed. ticket=", OrderTicket(),
+         Print(EA_NAME, " BUY STOP modify failed. ticket=", OrderTicket(),
                " current=", DoubleToString(current, Digits),
                " desired=", DoubleToString(desired, Digits),
                " error=", GetLastError());
@@ -177,9 +171,6 @@ void TrailSellStop()
    }
 }
 
-// INITIAL BUY TAKE PROFIT:
-// TakeProfit is a MONETARY target in the account currency, not a price/point distance.
-// Only the original FIRST STEP BUY is closed by this rule.
 void ProcessBuyTakeProfit()
 {
    if(TakeProfit <= 0.0) return;
@@ -217,9 +208,6 @@ void ProcessBuyTakeProfit()
    }
 }
 
-// INITIAL SELL TAKE PROFIT:
-// TakeProfit is a MONETARY target in the account currency, not a price/point distance.
-// Only the original FIRST STEP SELL is closed by this rule.
 void ProcessSellTakeProfit()
 {
    if(TakeProfit <= 0.0) return;
@@ -241,7 +229,7 @@ void ProcessSellTakeProfit()
       ResetLastError();
       if(!OrderClose(ticket, lots, ask, 0, clrNONE))
       {
-         Print(EAGOLD, " INITIAL SELL MONETARY TAKE PROFIT close failed. ticket=", ticket,
+         Print(EA_NAME, " INITIAL SELL MONETARY TAKE PROFIT close failed. ticket=", ticket,
                " profit=", DoubleToString(profit, 2),
                " targetMoney=", DoubleToString(TakeProfit, 2),
                " Ask=", DoubleToString(ask, Digits),
@@ -257,9 +245,6 @@ void ProcessSellTakeProfit()
    }
 }
 
-// Return the most recently activated SELL.
-// Open time is the primary criterion. Ticket is the tie-breaker when multiple
-// SELLs are opened within the same second, which can happen in fast backtests.
 bool GetLatestSell(double &latestSellOpen, int &latestSellTicket)
 {
    latestSellOpen   = 0.0;
@@ -314,12 +299,9 @@ void ProcessSellProgression()
    double triggerDistance = PointsToPrice(2.0 * SmartGrid1);
    double triggerPrice = NormalizePrice(latestSellOpen + triggerDistance);
 
-   // For a SELL, adverse movement is an increase in BID.
    if(Bid < triggerPrice)
       return;
 
-   // Once the trigger is reached, place the next SELL STOP exactly one
-   // SmartGrid1 above the latest activated SELL.
    double newSellStop = NormalizePrice(latestSellOpen + PointsToPrice(SmartGrid1));
 
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
@@ -348,7 +330,7 @@ void ProcessSellProgression()
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.014 initialized. FirstStep=", DoubleToString(FirstStep, 0),
+   Print(EA_NAME, " v0.015 initialized. FirstStep=", DoubleToString(FirstStep, 0),
          " PendingStepTrail=", DoubleToString(PendingStepTrail, 0),
          " TakeProfitMoney=", DoubleToString(TakeProfit, 2),
          " SmartGrid1=", DoubleToString(SmartGrid1, 0),
@@ -365,14 +347,6 @@ void OnDeinit(const int reason)
 
 void OnTick()
 {
-   // Implemented behavior only:
-   // 1. Rising price  -> SELL STOPs may move UP only.
-   // 2. Falling price -> BUY STOP may move DOWN only.
-   // 3. INITIAL BUY   -> closes ONLY when monetary TakeProfit is reached.
-   // 4. INITIAL SELL  -> closes ONLY when monetary TakeProfit is reached.
-   // 5. Open SELL + 2*SmartGrid1 adverse move -> SELL STOP at SmartGrid1.
-   // 6. SELL progression pending orders use the same directional trailing rule.
-   // All other parameters remain intentionally inactive.
    TrailSellStop();
    TrailBuyStop();
    ProcessBuyTakeProfit();
