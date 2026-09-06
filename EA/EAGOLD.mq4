@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.070"
+#property version   "0.071"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 9 + Backtest Panel"
 
 input int    MagicNumber              = 1001;
@@ -28,7 +28,6 @@ input double BuyProgressionTolerance  = 10.0;
 // R9 - Multiple CloseBy Containment
 input bool   EnableR9Containment      = true;
 input double R9_MinLots               = 1.00;
-input double R9_ContainmentPercent    = 30.0;
 
 string EA_NAME = "EAGOLD";
 
@@ -125,7 +124,7 @@ void PanelUpdate()
    if(!g_panelInitialized){g_panelMinProfit=totalProfit;g_panelMaxLots=totalLots;g_panelInitialized=true;}
    else{if(totalProfit<g_panelMinProfit)g_panelMinProfit=totalProfit;if(totalLots>g_panelMaxLots)g_panelMaxLots=totalLots;}
    int row=0;
-   PanelSet("TITLE","EAGOLD  v0.070",row++,clrWhite);
+   PanelSet("TITLE","EAGOLD  v0.071",row++,clrWhite);
    PanelSet("SEP1","==============================",row++,clrSilver);
    PanelSet("BUY",StringFormat("BUY   %3d pos   %6s lot",buyCount,PanelLots(buyLots)),row++,clrLime);
    PanelSet("BUYPL",StringFormat("P/L       %12s",PanelMoney(buyProfit)),row++,clrLime);
@@ -209,9 +208,7 @@ bool R9BasketTrigger()
    double winnerProfit=MathMax(buyProfit,sellProfit);
    double loserProfit=MathMin(buyProfit,sellProfit);
    if(winnerProfit<=0.0 || loserProfit>=0.0) return(false);
-   if(R9_ContainmentPercent<0.0) return(false);
-   double requiredProfit=MathAbs(loserProfit)*(R9_ContainmentPercent/100.0);
-   return(winnerProfit>=requiredProfit);
+   return(true);
 }
 
 bool Rule9MultipleCloseBy()
@@ -229,7 +226,7 @@ bool Rule9MultipleCloseBy()
       if(OrderType()==OP_BUY) buyLots+=OrderLots();
       else if(OrderType()==OP_SELL) sellLots+=OrderLots();
    }
-   Print(EA_NAME," RULE 9: CONTAINMENT START. BUY=",buyCount," lots=",DoubleToString(buyLots,DigitsLots)," P/L=",DoubleToString(buyProfit,2)," SELL=",sellCount," lots=",DoubleToString(sellLots,DigitsLots)," P/L=",DoubleToString(sellProfit,2)," TOTAL_LOTS=",DoubleToString(buyLots+sellLots,DigitsLots)," THRESHOLD=",DoubleToString(R9_ContainmentPercent,2),"%");
+   Print(EA_NAME," RULE 9: CONTAINMENT START. BUY=",buyCount," lots=",DoubleToString(buyLots,DigitsLots)," P/L=",DoubleToString(buyProfit,2)," SELL=",sellCount," lots=",DoubleToString(sellLots,DigitsLots)," P/L=",DoubleToString(sellProfit,2)," TOTAL_LOTS=",DoubleToString(buyLots+sellLots,DigitsLots));
    CloseAllDirectionPending(OP_BUY);
    CloseAllDirectionPending(OP_SELL);
    int safety=0;
@@ -263,6 +260,6 @@ bool Rule9MultipleCloseBy()
 void BuyMachine(){bool r9=Rule9MultipleCloseBy();if(r9){RestartEmptyBasket(OP_BUY);RestartEmptyBasket(OP_SELL);return;}bool basketClosed=BuyBasketClose();if(basketClosed)RestartEmptyBasket(OP_BUY);BuySingleTakeProfit();BuyRecovery();}
 void SellMachine(){bool basketClosed=SellBasketClose();if(basketClosed)RestartEmptyBasket(OP_SELL);SellSingleTakeProfit();SellRecovery();}
 
-int OnInit(){g_panelInitialized=false;g_panelMinProfit=0.0;g_panelMaxLots=0.0;PanelUpdate();Print(EA_NAME," v0.070 initialized. R6=ordinary STOPs; R7=special first/restart STOPs; R8=basket restart; R9=multiple CloseBy containment; panel=upper-right.");CreateFirstOrdersIfFlat();PanelUpdate();return(INIT_SUCCEEDED);}
+int OnInit(){g_panelInitialized=false;g_panelMinProfit=0.0;g_panelMaxLots=0.0;PanelUpdate();Print(EA_NAME," v0.071 initialized. R6=ordinary STOPs; R7=special first/restart STOPs; R8=basket restart; R9=multiple CloseBy containment; panel=upper-right.");CreateFirstOrdersIfFlat();PanelUpdate();return(INIT_SUCCEEDED);}
 void OnDeinit(const int reason){PanelDelete();}
 void OnTick(){BuyMachine();SellMachine();CreateFirstOrdersIfFlat();TrailStopOrdersRule6();TrailSpecialFirstStopOrders();PanelUpdate();}
