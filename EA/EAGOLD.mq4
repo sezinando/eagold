@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.055"
+#property version   "0.056"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 7"
 
 input int    MagicNumber              = 1001;
@@ -115,14 +115,6 @@ bool CloseMarketOrder(int ticket)
 
 // ============================================================
 // RULE 1 - FIRST STOP ORDERS / R1 EXCLUSIVE IDENTITY
-// R1 is the first independent BUY/SELL order of the machine.
-// BUY  -> BUY STOP at Ask + 1x FirstStep.
-// SELL -> SELL STOP at Bid - 1x FirstStep.
-// R1 does NOT use MiniGrid1 for its creation.
-// R1 has an exclusive comment so later rules can identify it
-// without confusing it with Recovery or TP Reentry orders.
-// R1 BUY  comment: EAGOLD R1 FIRST BUY
-// R1 SELL comment: EAGOLD R1 FIRST SELL
 // ============================================================
 void BuyCreateFirstOrder()
 {
@@ -146,6 +138,14 @@ void SellCreateFirstOrder()
 
 // ============================================================
 // RULE 2 + RULE 3 - RECOVERY
+// R2 is evaluated from the LAST ACTIVATED market position.
+// It does not use a pending order as the reference.
+// Trigger is STRICTLY greater than 2x SmartGrid1 in the adverse
+// direction. The new Recovery STOP remains 1x SmartGrid1 from
+// the last activated position.
+// A recovery pending is blocked only when a Recovery STOP of the
+// same direction already exists; other STOP categories do not
+// invalidate the R2 trigger.
 // ============================================================
 bool GetLatestActivatedPosition(int direction, double &latestPrice, double &latestLot, int &latestTicket)
 {
@@ -173,6 +173,19 @@ bool GetLatestActivatedPosition(int direction, double &latestPrice, double &late
    return(found);
 }
 
+bool HasRecoveryPending(int direction)
+{
+   string tag = (direction == OP_BUY ? "EAGOLD BUY RECOVERY" : "EAGOLD SELL RECOVERY");
+   int type = (direction == OP_BUY ? OP_BUYSTOP : OP_SELLSTOP);
+   for(int i=OrdersTotal()-1; i>=0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(!IsEAGOLDOrder() || OrderType() != type) continue;
+      if(StringFind(OrderComment(), tag, 0) >= 0) return(true);
+   }
+   return(false);
+}
+
 double NextRecoveryLot(double previousLot)
 {
    if(previousLot <= 0.0) return(NormalizeLot(Lot));
@@ -183,18 +196,39 @@ void BuyRecovery()
 {
    if(SmartGrid1 <= 0.0) return;
    if(CountDirectionPositions(OP_BUY) <= 0) return;
-   if(CountDirectionPending(OP_BUY) > 0) return;
+   if(HasRecoveryPending(OP_BUY)) return;
+
    double lastPrice=0.0, lastLot=NormalizeLot(Lot);
    int lastTicket=-1;
    if(!GetLatestActivatedPosition(OP_BUY, lastPrice, lastLot, lastTicket)) return;
+
    RefreshRates();
-   double trigger = NormalizePrice(lastPrice - PointsToPrice(2.0 * SmartGrid1));
+   double trigger = lastPrice - PointsToPrice(2.0 * SmartGrid1);
+
+   // R2 BUY: price must move strictly MORE than 2x SmartGrid1 below
+   // the last activated BUY position.
    if(Bid >= trigger) return;
+
    double newStop = NormalizePrice(lastPrice - PointsToPrice(SmartGrid1));
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
-   if(newStop <= Ask + stopLevel) return;
+   if(newStop <= Ask + stopLevel)
+   {
+      Print(EA_NAME, " BUY R2: trigger reached but Recovery BUY STOP is invalid at current market. lastTicket=", lastTicket,
+            " lastPrice=", DoubleToString(lastPrice, Digits),
+            " Bid=", DoubleToString(Bid, Digits),
+            " Ask=", DoubleToString(Ask, Digits),
+            " stop=", DoubleToString(newStop, Digits));
+      return;
+   }
+
    double nextLot = NextRecoveryLot(lastLot);
-   Print(EA_NAME, " BUY R2/R3 AUTHORIZED. lastTicket=", lastTicket, " lastPrice=", DoubleToString(lastPrice, Digits), " lastLot=", DoubleToString(lastLot, DigitsLots), " trigger=", DoubleToString(trigger, Digits), " Bid=", DoubleToString(Bid, Digits), " stop=", DoubleToString(newStop, Digits), " nextLot=", DoubleToString(nextLot, DigitsLots));
+   Print(EA_NAME, " BUY R2/R3 AUTHORIZED. lastTicket=", lastTicket,
+         " lastPrice=", DoubleToString(lastPrice, Digits),
+         " lastLot=", DoubleToString(lastLot, DigitsLots),
+         " trigger=", DoubleToString(trigger, Digits),
+         " Bid=", DoubleToString(Bid, Digits),
+         " stop=", DoubleToString(newStop, Digits),
+         " nextLot=", DoubleToString(nextLot, DigitsLots));
    SendPending(OP_BUYSTOP, newStop, nextLot, "EAGOLD BUY RECOVERY");
 }
 
@@ -202,24 +236,44 @@ void SellRecovery()
 {
    if(SmartGrid1 <= 0.0) return;
    if(CountDirectionPositions(OP_SELL) <= 0) return;
-   if(CountDirectionPending(OP_SELL) > 0) return;
+   if(HasRecoveryPending(OP_SELL)) return;
+
    double lastPrice=0.0, lastLot=NormalizeLot(Lot);
    int lastTicket=-1;
    if(!GetLatestActivatedPosition(OP_SELL, lastPrice, lastLot, lastTicket)) return;
+
    RefreshRates();
-   double trigger = NormalizePrice(lastPrice + PointsToPrice(2.0 * SmartGrid1));
+   double trigger = lastPrice + PointsToPrice(2.0 * SmartGrid1);
+
+   // R2 SELL: price must move strictly MORE than 2x SmartGrid1 above
+   // the last activated SELL position.
    if(Ask <= trigger) return;
+
    double newStop = NormalizePrice(lastPrice + PointsToPrice(SmartGrid1));
    double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
-   if(newStop >= Bid - stopLevel) return;
+   if(newStop >= Bid - stopLevel)
+   {
+      Print(EA_NAME, " SELL R2: trigger reached but Recovery SELL STOP is invalid at current market. lastTicket=", lastTicket,
+            " lastPrice=", DoubleToString(lastPrice, Digits),
+            " Bid=", DoubleToString(Bid, Digits),
+            " Ask=", DoubleToString(Ask, Digits),
+            " stop=", DoubleToString(newStop, Digits));
+      return;
+   }
+
    double nextLot = NextRecoveryLot(lastLot);
-   Print(EA_NAME, " SELL R2/R3 AUTHORIZED. lastTicket=", lastTicket, " lastPrice=", DoubleToString(lastPrice, Digits), " lastLot=", DoubleToString(lastLot, DigitsLots), " trigger=", DoubleToString(trigger, Digits), " Ask=", DoubleToString(Ask, Digits), " stop=", DoubleToString(newStop, Digits), " nextLot=", DoubleToString(nextLot, DigitsLots));
+   Print(EA_NAME, " SELL R2/R3 AUTHORIZED. lastTicket=", lastTicket,
+         " lastPrice=", DoubleToString(lastPrice, Digits),
+         " lastLot=", DoubleToString(lastLot, DigitsLots),
+         " trigger=", DoubleToString(trigger, Digits),
+         " Ask=", DoubleToString(Ask, Digits),
+         " stop=", DoubleToString(newStop, Digits),
+         " nextLot=", DoubleToString(nextLot, DigitsLots));
    SendPending(OP_SELLSTOP, newStop, nextLot, "EAGOLD SELL RECOVERY");
 }
 
 // ============================================================
 // RULE 6 - TRAILING OF RECOVERY STOP ORDERS ONLY
-// R6 remains unchanged: recovery STOP trails after >2x SmartGrid1.
 // ============================================================
 void TrailRecoveryStopOrders()
 {
@@ -234,17 +288,12 @@ void TrailRecoveryStopOrders()
       if(!IsEAGOLDOrder()) continue;
       int type = OrderType();
       if(type != OP_BUYSTOP && type != OP_SELLSTOP) continue;
-
       string comment = OrderComment();
-      if(StringFind(comment, "EAGOLD BUY RECOVERY", 0) < 0 &&
-         StringFind(comment, "EAGOLD SELL RECOVERY", 0) < 0)
-         continue;
-
+      if(StringFind(comment, "EAGOLD BUY RECOVERY", 0) < 0 && StringFind(comment, "EAGOLD SELL RECOVERY", 0) < 0) continue;
       RefreshRates();
       double current = OrderOpenPrice();
       double desired = current;
       double movement = 0.0;
-
       if(type == OP_SELLSTOP)
       {
          double distance = Bid - current;
@@ -261,7 +310,6 @@ void TrailRecoveryStopOrders()
          movement = current - desired;
          if(movement < trailStep || desired >= current || desired <= Ask + stopLevel) continue;
       }
-
       int ticket = OrderTicket();
       ResetLastError();
       if(!OrderModify(ticket, desired, 0, 0, 0, clrNONE))
@@ -273,31 +321,10 @@ void TrailRecoveryStopOrders()
 
 // ============================================================
 // RULE 7 - TRAILING OF R1 FIRST STOP ORDERS
-// R7 operates independently of order activation.
-// It does NOT wait for BUY or SELL R1 to become a market position.
-// It does NOT create a second STOP.
-// It modifies the original R1 FIRST STOP itself.
-//
-// R1 BUY  = "EAGOLD R1 FIRST BUY"  -> BUY STOP trails DOWN.
-// R1 SELL = "EAGOLD R1 FIRST SELL" -> SELL STOP trails UP.
-//
-// The trailing reference is the STOP's current price.
-// The initial reference distance is 1x FirstStep.
-// R7 is triggered when the market-to-STOP distance reaches
-// 1x FirstStep + 1x PendingStepTrail on the opposite side.
-// After the trigger, the STOP is moved toward the market so that
-// its distance is restored to 1x FirstStep.
-//
-// Example:
-// FirstStep=160, PendingStepTrail=50
-// SellStop=200, market=360 -> distance=160, no trailing.
-// Market=410 -> distance=210 -> SellStop 200 becomes 250.
-// The same logic repeats for every additional 50-point movement.
 // ============================================================
 void TrailR1FirstStopOrders()
 {
    if(FirstStep <= 0.0 || PendingStepTrail <= 0.0) return;
-
    double trailDistance = PointsToPrice(FirstStep);
    double trailStep = PointsToPrice(PendingStepTrail);
    double activationDistance = trailDistance + trailStep;
@@ -307,56 +334,37 @@ void TrailR1FirstStopOrders()
    {
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       if(!IsEAGOLDOrder()) continue;
-
       int type = OrderType();
       if(type != OP_BUYSTOP && type != OP_SELLSTOP) continue;
-
       string comment = OrderComment();
-
-      // R7 is exclusive to the original R1 first-order STOPs.
       if(type == OP_BUYSTOP && StringFind(comment, "EAGOLD R1 FIRST BUY", 0) < 0) continue;
       if(type == OP_SELLSTOP && StringFind(comment, "EAGOLD R1 FIRST SELL", 0) < 0) continue;
-
       RefreshRates();
       double current = OrderOpenPrice();
       double desired = current;
       double movement = 0.0;
-
       if(type == OP_SELLSTOP)
       {
-         // SELL STOP: price must move upward, opposite to the order side.
          double distance = Bid - current;
          if(distance < activationDistance) continue;
-
          desired = NormalizePrice(Bid - trailDistance);
          movement = desired - current;
-
-         if(movement < trailStep) continue;
-         if(desired <= current) continue;
-         if(desired >= Bid - stopLevel) continue;
+         if(movement < trailStep || desired <= current || desired >= Bid - stopLevel) continue;
       }
       else
       {
-         // BUY STOP: price must move downward, opposite to the order side.
          double distance = current - Ask;
          if(distance < activationDistance) continue;
-
          desired = NormalizePrice(Ask + trailDistance);
          movement = current - desired;
-
-         if(movement < trailStep) continue;
-         if(desired >= current) continue;
-         if(desired <= Ask + stopLevel) continue;
+         if(movement < trailStep || desired >= current || desired <= Ask + stopLevel) continue;
       }
-
       int ticket = OrderTicket();
       ResetLastError();
       if(!OrderModify(ticket, desired, 0, 0, 0, clrNONE))
          Print(EA_NAME, " RULE 7: R1 FIRST STOP TRAIL FAILED. ticket=", ticket, " error=", GetLastError());
       else
-         Print(EA_NAME, " RULE 7: R1 FIRST STOP TRAIL. ticket=", ticket,
-               " from=", DoubleToString(current, Digits),
-               " to=", DoubleToString(desired, Digits));
+         Print(EA_NAME, " RULE 7: R1 FIRST STOP TRAIL. ticket=", ticket, " from=", DoubleToString(current, Digits), " to=", DoubleToString(desired, Digits));
    }
 }
 
@@ -457,7 +465,7 @@ void SellMachine(){ SellBasketClose(); SellSingleTakeProfit(); SellRecovery(); S
 
 int OnInit()
 {
-   Print(EA_NAME, " v0.055 initialized. R1=FirstStep exclusive tag; R6=R2 recovery STOP trailing; R7=R1 FIRST STOP trailing after FirstStep+PendingStepTrail in opposite direction. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
+   Print(EA_NAME, " v0.056 initialized. R1 unchanged; R2 uses last activated position and strict >2x SmartGrid1 trigger; R6 unchanged; R7 unchanged. Multiplier=", DoubleToString(Multiplier,2), " LotIncrement=", DoubleToString(LotIncrement,DigitsLots));
    BuyCreateFirstOrder();
    SellCreateFirstOrder();
    return(INIT_SUCCEEDED);
@@ -467,10 +475,6 @@ void OnDeinit(const int reason){}
 
 void OnTick()
 {
-   // R2/R3/R4/R5 machines execute first.
-   // R6 trails only Recovery STOPs created by R2.
-   // R7 independently trails the original R1 FIRST STOPs,
-   // without requiring any R1 activation.
    BuyMachine();
    SellMachine();
    TrailRecoveryStopOrders();
