@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.083"
+#property version   "0.084"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 10 + Global STOP Trailing + Backtest Panel"
 
 input int MagicNumber=1001;
@@ -59,7 +59,7 @@ void PanelSet(string id,string text,int row,color clr){string name=PANEL_PREFIX+
 void PanelDelete(){string ids[]={"BG","TITLE","SEP1","BUY","BUYPL","BUYT","SELL","SELLPL","SELLT","SEP2","TOTAL","MIN","LOTS","MAXLOTS","NET","PEND","PBUY","PSELL","HEDGE","HEDGE2","R10","SEP3","TIME"};for(int i=0;i<ArraySize(ids);i++){string name=PANEL_PREFIX+ids[i];if(ObjectFind(0,name)>=0)ObjectDelete(name);}}
 string PanelMoney(double value){return(DoubleToString(value,2));}
 string PanelLots(double value){return(DoubleToString(value,2));}
-void PanelUpdate(){PanelCreate();int buyCount=0,sellCount=0,buyPending=0,sellPending=0;double buyLots=0.0,sellLots=0.0,buyProfit=0.0,sellProfit=0.0;for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder())continue;int type=OrderType();if(type==OP_BUY){buyCount++;buyLots+=OrderLots();buyProfit+=OrderProfit()+OrderSwap()+OrderCommission();}else if(type==OP_SELL){sellCount++;sellLots+=OrderLots();sellProfit+=OrderProfit()+OrderSwap()+OrderCommission();}else if(type==OP_BUYSTOP)buyPending++;else if(type==OP_SELLSTOP)sellPending++;}double totalProfit=buyProfit+sellProfit,totalLots=buyLots+sellLots,netLots=buyLots-sellLots;int totalPending=buyPending+sellPending;if(!g_panelInitialized){g_panelMinProfit=totalProfit;g_panelMaxLots=totalLots;g_panelInitialized=true;}else{if(totalProfit<g_panelMinProfit)g_panelMinProfit=totalProfit;if(totalLots>g_panelMaxLots)g_panelMaxLots=totalLots;}int row=0;PanelSet("TITLE","EAGOLD  v0.083",row++,clrWhite);PanelSet("SEP1","==============================",row++,clrSilver);PanelSet("BUY",StringFormat("BUY   %3d pos   %6s lot",buyCount,PanelLots(buyLots)),row++,clrLime);PanelSet("BUYPL",StringFormat("P/L       %12s",PanelMoney(buyProfit)),row++,clrLime);PanelSet("BUYT",StringFormat("Target    %12s",PanelMoney(buyCount*TakeProfit)),row++,clrSilver);PanelSet("SELL",StringFormat("SELL  %3d pos   %6s lot",sellCount,PanelLots(sellLots)),row++,clrTomato);PanelSet("SELLPL",StringFormat("P/L       %12s",PanelMoney(sellProfit)),row++,clrTomato);PanelSet("SELLT",StringFormat("Target    %12s",PanelMoney(sellCount*TakeProfit)),row++,clrSilver);PanelSet("SEP2","==============================",row++,clrSilver);PanelSet("TOTAL",StringFormat("TOTAL P/L %12s",PanelMoney(totalProfit)),row++,clrWhite);PanelSet("MIN",StringFormat("MENOR P/L %11s",PanelMoney(g_panelMinProfit)),row++,clrYellow);PanelSet("LOTS",StringFormat("LOTES ATUAIS %9s",PanelLots(totalLots)),row++,clrWhite);PanelSet("MAXLOTS",StringFormat("MAIOR ACUM. %9s",PanelLots(g_panelMaxLots)),row++,clrYellow);PanelSet("NET",StringFormat("EXPOS. LIQ. %10s",PanelLots(netLots)),row++,clrWhite);PanelSet("PEND",StringFormat("PENDENTES     %6d",totalPending),row++,clrSilver);PanelSet("PBUY",StringFormat("BUY STOP      %6d",buyPending),row++,clrSilver);PanelSet("PSELL",StringFormat("SELL STOP     %6d",sellPending),row++,clrSilver);if(g_r9HedgeActive){int heavy=HeavyDirection();string side=(heavy==OP_BUY?"SELL":"BUY");PanelSet("HEDGE","HEDGE: ATIVO",row++,clrYellow);PanelSet("HEDGE2",StringFormat("BALANCEANDO %s  EXP %s",side,PanelLots(ExposureLots())),row++,clrYellow);}else{PanelSet("HEDGE","HEDGE: INATIVO",row++,clrSilver);PanelSet("HEDGE2",StringFormat("EXPOS. %s",PanelLots(ExposureLots())),row++,clrSilver);}PanelSet("R10",StringFormat("R10 REDUCE %s",EnableR10Reduce?"ON":"OFF"),row++,EnableR10Reduce?clrYellow:clrSilver);PanelSet("SEP3","==============================",row++,clrSilver);PanelSet("TIME",TimeToString(TimeCurrent(),TIME_SECONDS),row++,clrSilver);ChartRedraw(0);}
+void PanelUpdate(){PanelCreate();int buyCount=0,sellCount=0,buyPending=0,sellPending=0;double buyLots=0.0,sellLots=0.0,buyProfit=0.0,sellProfit=0.0;for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder())continue;int type=OrderType();if(type==OP_BUY){buyCount++;buyLots+=OrderLots();buyProfit+=OrderProfit()+OrderSwap()+OrderCommission();}else if(type==OP_SELL){sellCount++;sellLots+=OrderLots();sellProfit+=OrderProfit()+OrderSwap()+OrderCommission();}else if(type==OP_BUYSTOP)buyPending++;else if(type==OP_SELLSTOP)sellPending++;}double totalProfit=buyProfit+sellProfit,totalLots=buyLots+sellLots,netLots=buyLots-sellLots;int totalPending=buyPending+sellPending;if(!g_panelInitialized){g_panelMinProfit=totalProfit;g_panelMaxLots=totalLots;g_panelInitialized=true;}else{if(totalProfit<g_panelMinProfit)g_panelMinProfit=totalProfit;if(totalLots>g_panelMaxLots)g_panelMaxLots=totalLots;}int row=0;PanelSet("TITLE","EAGOLD  v0.084",row++,clrWhite);PanelSet("SEP1","==============================",row++,clrSilver);PanelSet("BUY",StringFormat("BUY   %3d pos   %6s lot",buyCount,PanelLots(buyLots)),row++,clrLime);PanelSet("BUYPL",StringFormat("P/L       %12s",PanelMoney(buyProfit)),row++,clrLime);PanelSet("BUYT",StringFormat("Target    %12s",PanelMoney(buyCount*TakeProfit)),row++,clrSilver);PanelSet("SELL",StringFormat("SELL  %3d pos   %6s lot",sellCount,PanelLots(sellLots)),row++,clrTomato);PanelSet("SELLPL",StringFormat("P/L       %12s",PanelMoney(sellProfit)),row++,clrTomato);PanelSet("SELLT",StringFormat("Target    %12s",PanelMoney(sellCount*TakeProfit)),row++,clrSilver);PanelSet("SEP2","==============================",row++,clrSilver);PanelSet("TOTAL",StringFormat("TOTAL P/L %12s",PanelMoney(totalProfit)),row++,clrWhite);PanelSet("MIN",StringFormat("MENOR P/L %11s",PanelMoney(g_panelMinProfit)),row++,clrYellow);PanelSet("LOTS",StringFormat("LOTES ATUAIS %9s",PanelLots(totalLots)),row++,clrWhite);PanelSet("MAXLOTS",StringFormat("MAIOR ACUM. %9s",PanelLots(g_panelMaxLots)),row++,clrYellow);PanelSet("NET",StringFormat("EXPOS. LIQ. %10s",PanelLots(netLots)),row++,clrWhite);PanelSet("PEND",StringFormat("PENDENTES     %6d",totalPending),row++,clrSilver);PanelSet("PBUY",StringFormat("BUY STOP      %6d",buyPending),row++,clrSilver);PanelSet("PSELL",StringFormat("SELL STOP     %6d",sellPending),row++,clrSilver);if(g_r9HedgeActive){int heavy=HeavyDirection();string side=(heavy==OP_BUY?"SELL":"BUY");PanelSet("HEDGE","HEDGE: ATIVO",row++,clrYellow);PanelSet("HEDGE2",StringFormat("BALANCEANDO %s  EXP %s",side,PanelLots(ExposureLots())),row++,clrYellow);}else{PanelSet("HEDGE","HEDGE: INATIVO",row++,clrSilver);PanelSet("HEDGE2",StringFormat("EXPOS. %s",PanelLots(ExposureLots())),row++,clrSilver);}PanelSet("R10",StringFormat("R10 REDUCE %s",EnableR10Reduce?"ON":"OFF"),row++,EnableR10Reduce?clrYellow:clrSilver);PanelSet("SEP3","==============================",row++,clrSilver);PanelSet("TIME",TimeToString(TimeCurrent(),TIME_SECONDS),row++,clrSilver);ChartRedraw(0);}
 
 int SendPending(int type,double price,double lots,string comment){RefreshRates();double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;price=NormalizePrice(price);lots=NormalizeLot(lots);if(type==OP_BUYSTOP&&price<=Ask+stopLevel)return(-1);if(type==OP_SELLSTOP&&price>=Bid-stopLevel)return(-1);ResetLastError();int ticket=OrderSend(Symbol(),type,lots,price,0,0,0,comment,MagicNumber,0,clrNONE);if(ticket<0)Print(EA_NAME," OrderSend failed. type=",type," error=",GetLastError()," comment=",comment);else Print(EA_NAME," pending created. ticket=",ticket," type=",type," price=",DoubleToString(price,Digits)," lot=",DoubleToString(lots,DigitsLots)," comment=",comment);return(ticket);}
 int SendMarket(int type,double lots,string comment){RefreshRates();lots=NormalizeLot(lots);double price=(type==OP_BUY?Ask:Bid);ResetLastError();int ticket=OrderSend(Symbol(),type,lots,NormalizePrice(price),0,0,0,comment,MagicNumber,0,clrNONE);if(ticket<0)Print(EA_NAME," market send failed. type=",type," error=",GetLastError()," comment=",comment);else Print(EA_NAME," market created. ticket=",ticket," type=",type," lot=",DoubleToString(lots,DigitsLots)," comment=",comment);return(ticket);}
@@ -68,7 +68,34 @@ bool CloseMarketOrderLots(int ticket,double lots){if(!OrderSelect(ticket,SELECT_
 bool DeletePendingOrder(int ticket){if(!OrderSelect(ticket,SELECT_BY_TICKET,MODE_TRADES))return(false);if(!IsEAGOLDOrder())return(false);int type=OrderType();if(type!=OP_BUYSTOP&&type!=OP_SELLSTOP)return(false);ResetLastError();if(!OrderDelete(ticket)){Print(EA_NAME," pending delete failed. ticket=",ticket," error=",GetLastError());return(false);}return(true);}
 void CloseAllDirectionPending(int direction){int type=(direction==OP_BUY?OP_BUYSTOP:OP_SELLSTOP);for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder()||OrderType()!=type)continue;DeletePendingOrder(OrderTicket());}}
 
-void CreateFirstOrdersIfFlat(){if(CountEAGOLDOrders()!=0)return;RefreshRates();int b=SendPending(OP_BUYSTOP,Ask+PointsToPrice(FirstStep),Lot,"EAGOLD R1 FIRST BUY");int s=SendPending(OP_SELLSTOP,Bid-PointsToPrice(FirstStep),Lot,"EAGOLD R1 FIRST SELL");if(b>0||s>0)Print(EA_NAME," RULE 1: initial seeds created. BUY=",b," SELL=",s);}
+// RULE 1 / KEEP-ALIVE: BUY and SELL machines are independent.
+// A side is considered alive when it has either an active position or its own STOP pending.
+// We never open a market order here. If a side disappears completely, only its STOP seed is recreated.
+void EnsureDirectionMachineAlive(int direction){
+   if(CountDirectionPositions(direction)>0)return;
+   if(CountDirectionPending(direction)>0)return;
+   RefreshRates();
+   int ticket=-1;
+   if(direction==OP_BUY)
+      ticket=SendPending(OP_BUYSTOP,Ask+PointsToPrice(BasketRestartStep),Lot,"EAGOLD R7 RESTART BUY");
+   else
+      ticket=SendPending(OP_SELLSTOP,Bid-PointsToPrice(BasketRestartStep),Lot,"EAGOLD R7 RESTART SELL");
+   if(ticket>0)Print(EA_NAME," KEEP-ALIVE: ",(direction==OP_BUY?"BUY":"SELL")," machine recreated. STOP ticket=",ticket);
+}
+
+void CreateFirstOrdersIfFlat(){
+   // Initial seed: when the whole EA is flat, use the original FirstStep on both sides.
+   if(CountEAGOLDOrders()==0){
+      RefreshRates();
+      int b=SendPending(OP_BUYSTOP,Ask+PointsToPrice(FirstStep),Lot,"EAGOLD R1 FIRST BUY");
+      int s=SendPending(OP_SELLSTOP,Bid-PointsToPrice(FirstStep),Lot,"EAGOLD R1 FIRST SELL");
+      if(b>0||s>0)Print(EA_NAME," RULE 1: initial seeds created. BUY=",b," SELL=",s);
+      return;
+   }
+   // After initialization, maintain both directional machines independently.
+   EnsureDirectionMachineAlive(OP_BUY);
+   EnsureDirectionMachineAlive(OP_SELL);
+}
 
 bool GetLatestActivatedPosition(int direction,double &latestPrice,double &latestLot,int &latestTicket){int type=(direction==OP_BUY?OP_BUY:OP_SELL);latestPrice=0.0;latestLot=NormalizeLot(Lot);latestTicket=-1;datetime latestTime=0;bool found=false;for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder()||OrderType()!=type)continue;datetime t=OrderOpenTime();int ticket=OrderTicket();if(!found||t>latestTime||(t==latestTime&&ticket>latestTicket)){found=true;latestTime=t;latestPrice=OrderOpenPrice();latestLot=OrderLots();latestTicket=ticket;}}return(found);}
 bool HasRecoveryPending(int direction){string tag=(direction==OP_BUY?"EAGOLD BUY RECOVERY":"EAGOLD SELL RECOVERY");int type=(direction==OP_BUY?OP_BUYSTOP:OP_SELLSTOP);for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder()||OrderType()!=type)continue;if(StringFind(OrderComment(),tag,0)>=0)return(true);}return(false);}
@@ -85,69 +112,9 @@ void SellSingleTakeProfit(){if(CountDirectionPositions(OP_SELL)!=1)return;if(!Ca
 bool BuyBasketTargetReached(){int count=CountDirectionPositions(OP_BUY);if(count<=1||TakeProfit<=0.0)return(false);return(DirectionBasketProfit(OP_BUY)>=count*TakeProfit);}
 bool SellBasketTargetReached(){int count=CountDirectionPositions(OP_SELL);if(count<=1||TakeProfit<=0.0)return(false);return(DirectionBasketProfit(OP_SELL)>=count*TakeProfit);}
 
-// RULE 10: reduce gross exposure while preserving net exposure.
-// If the target basket is the heavy side, close the same number of lots from
-// both directions, limited by the lighter basket. Example 10 BUY / 7 SELL:
-// reduce 3 lots from each side -> 7 BUY / 4 SELL. Net exposure stays at 3.
-// The rule acts only once per target event because after the reduction the
-// target basket profit normally falls below its target. It never increases net exposure.
-bool ReduceDirectionByLots(int direction,double lotsToReduce){
-   if(lotsToReduce<Lot)return(false);
-   int type=(direction==OP_BUY?OP_BUY:OP_SELL);
-   int tickets[];ArrayResize(tickets,0);
-   double ticketLots[];ArrayResize(ticketLots,0);
-   for(int i=OrdersTotal()-1;i>=0;i--){
-      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;
-      if(!IsEAGOLDOrder()||OrderType()!=type)continue;
-      int n=ArraySize(tickets);ArrayResize(tickets,n+1);ArrayResize(ticketLots,n+1);
-      tickets[n]=OrderTicket();ticketLots[n]=OrderLots();
-   }
-   // Close larger positions first, preserving the smaller progression entries.
-   for(int a=0;a<ArraySize(tickets)-1;a++)for(int b=a+1;b<ArraySize(tickets);b++)if(ticketLots[b]>ticketLots[a]){
-      int ti=tickets[a];tickets[a]=tickets[b];tickets[b]=ti;
-      double tl=ticketLots[a];ticketLots[a]=ticketLots[b];ticketLots[b]=tl;
-   }
-   double remaining=NormalizeDouble(lotsToReduce,DigitsLots);
-   bool changed=false;
-   for(int j=0;j<ArraySize(tickets)&&remaining>=Lot;j++){
-      if(!OrderSelect(tickets[j],SELECT_BY_TICKET,MODE_TRADES))continue;
-      if(!IsEAGOLDOrder()||OrderType()!=type)continue;
-      double available=OrderLots();
-      double closeLots=NormalizeDouble(MathMin(available,remaining),DigitsLots);
-      if(closeLots<Lot)continue;
-      if(CloseMarketOrderLots(tickets[j],closeLots)){
-         remaining=NormalizeDouble(remaining-closeLots,DigitsLots);
-         changed=true;
-      }
-   }
-   return(changed&&remaining<Lot);
-}
+bool ReduceDirectionByLots(int direction,double lotsToReduce){if(lotsToReduce<Lot)return(false);int type=(direction==OP_BUY?OP_BUY:OP_SELL);int tickets[];ArrayResize(tickets,0);double ticketLots[];ArrayResize(ticketLots,0);for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder()||OrderType()!=type)continue;int n=ArraySize(tickets);ArrayResize(tickets,n+1);ArrayResize(ticketLots,n+1);tickets[n]=OrderTicket();ticketLots[n]=OrderLots();}for(int a=0;a<ArraySize(tickets)-1;a++)for(int b=a+1;b<ArraySize(tickets);b++)if(ticketLots[b]>ticketLots[a]){int ti=tickets[a];tickets[a]=tickets[b];tickets[b]=ti;double tl=ticketLots[a];ticketLots[a]=ticketLots[b];ticketLots[b]=tl;}double remaining=NormalizeDouble(lotsToReduce,DigitsLots);bool changed=false;for(int j=0;j<ArraySize(tickets)&&remaining>=Lot;j++){if(!OrderSelect(tickets[j],SELECT_BY_TICKET,MODE_TRADES))continue;if(!IsEAGOLDOrder()||OrderType()!=type)continue;double available=OrderLots();double closeLots=NormalizeDouble(MathMin(available,remaining),DigitsLots);if(closeLots<Lot)continue;if(CloseMarketOrderLots(tickets[j],closeLots)){remaining=NormalizeDouble(remaining-closeLots,DigitsLots);changed=true;}}return(changed&&remaining<Lot);}
 
-bool Rule10Reduce(int targetDirection){
-   if(!EnableR10Reduce||R10MinExposureLots<=0.0)return(false);
-   int opposite=(targetDirection==OP_BUY?OP_SELL:OP_BUY);
-   double targetLots=DirectionLots(targetDirection);
-   double oppositeLots=DirectionLots(opposite);
-   double exposure=targetLots-oppositeLots;
-   if(exposure<R10MinExposureLots)return(false);
-   if(oppositeLots<Lot)return(false);
-   if(targetLots<=oppositeLots)return(false);
-   double reduceLots=NormalizeDouble(MathMin(exposure,oppositeLots),DigitsLots);
-   if(reduceLots<R10MinExposureLots)return(false);
-   double beforeExposure=ExposureLots();
-   double beforeGross=targetLots+oppositeLots;
-   Print(EA_NAME," RULE 10 TRIGGER: target=",(targetDirection==OP_BUY?"BUY":"SELL")," heavy=",DoubleToString(targetLots,DigitsLots)," light=",DoubleToString(oppositeLots,DigitsLots)," exposure=",DoubleToString(beforeExposure,DigitsLots)," gross=",DoubleToString(beforeGross,DigitsLots)," reduce=",DoubleToString(reduceLots,DigitsLots));
-   if(!ReduceDirectionByLots(targetDirection,reduceLots))return(false);
-   if(!ReduceDirectionByLots(opposite,reduceLots)){
-      Print(EA_NAME," RULE 10 WARNING: opposite-side reduction failed. System will not add exposure.");
-      return(false);
-   }
-   double afterExposure=ExposureLots();
-   double afterGross=DirectionLots(OP_BUY)+DirectionLots(OP_SELL);
-   if(afterExposure>beforeExposure+0.00001){Print(EA_NAME," RULE 10 SAFETY FAILURE: exposure increased. before=",DoubleToString(beforeExposure,DigitsLots)," after=",DoubleToString(afterExposure,DigitsLots));return(false);}
-   Print(EA_NAME," RULE 10 REDUCE COMPLETE: exposure ",DoubleToString(beforeExposure,DigitsLots)," -> ",DoubleToString(afterExposure,DigitsLots)," gross ",DoubleToString(beforeGross,DigitsLots)," -> ",DoubleToString(afterGross,DigitsLots));
-   return(true);
-}
+bool Rule10Reduce(int targetDirection){if(!EnableR10Reduce||R10MinExposureLots<=0.0)return(false);int opposite=(targetDirection==OP_BUY?OP_SELL:OP_BUY);double targetLots=DirectionLots(targetDirection);double oppositeLots=DirectionLots(opposite);double exposure=targetLots-oppositeLots;if(exposure<R10MinExposureLots)return(false);if(oppositeLots<Lot)return(false);if(targetLots<=oppositeLots)return(false);double reduceLots=NormalizeDouble(MathMin(exposure,oppositeLots),DigitsLots);if(reduceLots<R10MinExposureLots)return(false);double beforeExposure=ExposureLots();double beforeGross=targetLots+oppositeLots;Print(EA_NAME," RULE 10 TRIGGER: target=",(targetDirection==OP_BUY?"BUY":"SELL")," heavy=",DoubleToString(targetLots,DigitsLots)," light=",DoubleToString(oppositeLots,DigitsLots)," exposure=",DoubleToString(beforeExposure,DigitsLots)," gross=",DoubleToString(beforeGross,DigitsLots)," reduce=",DoubleToString(reduceLots,DigitsLots));if(!ReduceDirectionByLots(targetDirection,reduceLots))return(false);if(!ReduceDirectionByLots(opposite,reduceLots)){Print(EA_NAME," RULE 10 WARNING: opposite-side reduction failed. System will not add exposure.");return(false);}double afterExposure=ExposureLots();double afterGross=DirectionLots(OP_BUY)+DirectionLots(OP_SELL);if(afterExposure>beforeExposure+0.00001){Print(EA_NAME," RULE 10 SAFETY FAILURE: exposure increased. before=",DoubleToString(beforeExposure,DigitsLots)," after=",DoubleToString(afterExposure,DigitsLots));return(false);}Print(EA_NAME," RULE 10 REDUCE COMPLETE: exposure ",DoubleToString(beforeExposure,DigitsLots)," -> ",DoubleToString(afterExposure,DigitsLots)," gross ",DoubleToString(beforeGross,DigitsLots)," -> ",DoubleToString(afterGross,DigitsLots));return(true);}
 
 bool BuyBasketClose(){int count=CountDirectionPositions(OP_BUY);if(count<=1||TakeProfit<=0.0)return(false);if(!CanCloseLightBasket(OP_BUY))return(false);double target=count*TakeProfit;double profit=DirectionBasketProfit(OP_BUY);if(profit<target)return(false);Print(EA_NAME," RULE 5 BUY TARGET. count=",count," profit=",DoubleToString(profit,2)," target=",DoubleToString(target,2));bool closed=CloseDirectionPositionsRobust(OP_BUY);if(closed){CloseAllDirectionPending(OP_BUY);Print(EA_NAME," RULE 5 BUY CLOSED ALL. count=",count);return(true);}Print(EA_NAME," RULE 5 BUY PARTIAL/FAILED. remaining=",CountDirectionPositions(OP_BUY));return(false);}
 bool SellBasketClose(){int count=CountDirectionPositions(OP_SELL);if(count<=1||TakeProfit<=0.0)return(false);if(!CanCloseLightBasket(OP_SELL))return(false);double target=count*TakeProfit;double profit=DirectionBasketProfit(OP_SELL);if(profit<target)return(false);Print(EA_NAME," RULE 5 SELL TARGET. count=",count," profit=",DoubleToString(profit,2)," target=",DoubleToString(target,2));bool closed=CloseDirectionPositionsRobust(OP_SELL);if(closed){CloseAllDirectionPending(OP_SELL);Print(EA_NAME," RULE 5 SELL CLOSED ALL. count=",count);return(true);}Print(EA_NAME," RULE 5 SELL PARTIAL/FAILED. remaining=",CountDirectionPositions(OP_SELL));return(false);}
@@ -158,34 +125,7 @@ bool R9Processed(int ticket){return(IntArrayContains(g_r9ProcessedTickets,ticket
 void R9MarkProcessed(int ticket){IntArrayAdd(g_r9ProcessedTickets,ticket);}
 void R9SeedExistingPositions(){for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder())continue;int type=OrderType();if(type==OP_BUY||type==OP_SELL)R9MarkProcessed(OrderTicket());}}
 
-// GLOBAL STOP TRAILING: every EAGOLD STOP order is managed regardless of origin.
-void TrailAllStopOrders(){
-   if(PendingStepTrail<=0.0)return;
-   double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
-   for(int i=OrdersTotal()-1;i>=0;i--){
-      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;
-      if(!IsEAGOLDOrder())continue;
-      int type=OrderType();
-      if(type!=OP_BUYSTOP&&type!=OP_SELLSTOP)continue;
-      string c=OrderComment();
-      double resetPoints=0.0;
-      double triggerPoints=PendingStepTrail;
-      string family="GLOBAL";
-      if(StringFind(c,"EAGOLD R1 FIRST",0)>=0){resetPoints=FirstStep;triggerPoints=FirstStep+PendingStepTrail;family="R1 FIRST";}
-      else if(StringFind(c,"EAGOLD BUY RECOVERY",0)>=0||StringFind(c,"EAGOLD SELL RECOVERY",0)>=0){resetPoints=RecoveryMinDistance;triggerPoints=2.0*SmartGrid1;family="RECOVERY";}
-      else if(StringFind(c,"EAGOLD R4 BUY NEXT",0)>=0){resetPoints=MiniGrid1;family="R4 BUY";}
-      else if(StringFind(c,"EAGOLD R4 SELL NEXT",0)>=0){resetPoints=MiniGrid2;family="R4 SELL";}
-      else if(StringFind(c,"EAGOLD R7 RESTART",0)>=0){resetPoints=BasketRestartStep;family="R7 RESTART";}
-      else{double marketDistance=(type==OP_BUYSTOP?OrderOpenPrice()-Ask:Bid-OrderOpenPrice());if(marketDistance<=0.0)continue;resetPoints=marketDistance/Point;family="GLOBAL UNKNOWN";}
-      if(resetPoints<=0.0||triggerPoints<=0.0)continue;
-      double trigger=PointsToPrice(triggerPoints),resetDistance=PointsToPrice(resetPoints);RefreshRates();double current=OrderOpenPrice(),desired=current,adverseDistance=0.0;int ticket=OrderTicket();
-      if(type==OP_BUYSTOP){adverseDistance=current-Ask;if(adverseDistance<trigger)continue;desired=NormalizePrice(Ask+resetDistance);if(desired>=current||desired<=Ask+stopLevel)continue;}
-      else{adverseDistance=Bid-current;if(adverseDistance<trigger)continue;desired=NormalizePrice(Bid-resetDistance);if(desired<=current||desired>=Bid-stopLevel)continue;}
-      ResetLastError();
-      if(!OrderModify(ticket,desired,0,0,0,clrNONE))Print(EA_NAME," GLOBAL STOP TRAIL FAILED ticket=",ticket," family=",family," error=",GetLastError());
-      else Print(EA_NAME," GLOBAL STOP TRAIL ticket=",ticket," family=",family," old=",DoubleToString(current,Digits)," new=",DoubleToString(desired,Digits)," adverse=",DoubleToString(adverseDistance/Point,1)," trigger=",DoubleToString(triggerPoints,1)," reset=",DoubleToString(resetPoints,1));
-   }
-}
+void TrailAllStopOrders(){if(PendingStepTrail<=0.0)return;double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder())continue;int type=OrderType();if(type!=OP_BUYSTOP&&type!=OP_SELLSTOP)continue;string c=OrderComment();double resetPoints=0.0;double triggerPoints=PendingStepTrail;string family="GLOBAL";if(StringFind(c,"EAGOLD R1 FIRST",0)>=0){resetPoints=FirstStep;triggerPoints=FirstStep+PendingStepTrail;family="R1 FIRST";}else if(StringFind(c,"EAGOLD BUY RECOVERY",0)>=0||StringFind(c,"EAGOLD SELL RECOVERY",0)>=0){resetPoints=RecoveryMinDistance;triggerPoints=2.0*SmartGrid1;family="RECOVERY";}else if(StringFind(c,"EAGOLD R4 BUY NEXT",0)>=0){resetPoints=MiniGrid1;family="R4 BUY";}else if(StringFind(c,"EAGOLD R4 SELL NEXT",0)>=0){resetPoints=MiniGrid2;family="R4 SELL";}else if(StringFind(c,"EAGOLD R7 RESTART",0)>=0){resetPoints=BasketRestartStep;family="R7 RESTART";}else{double marketDistance=(type==OP_BUYSTOP?OrderOpenPrice()-Ask:Bid-OrderOpenPrice());if(marketDistance<=0.0)continue;resetPoints=marketDistance/Point;family="GLOBAL UNKNOWN";}if(resetPoints<=0.0||triggerPoints<=0.0)continue;double trigger=PointsToPrice(triggerPoints),resetDistance=PointsToPrice(resetPoints);RefreshRates();double current=OrderOpenPrice(),desired=current,adverseDistance=0.0;int ticket=OrderTicket();if(type==OP_BUYSTOP){adverseDistance=current-Ask;if(adverseDistance<trigger)continue;desired=NormalizePrice(Ask+resetDistance);if(desired>=current||desired<=Ask+stopLevel)continue;}else{adverseDistance=Bid-current;if(adverseDistance<trigger)continue;desired=NormalizePrice(Bid-resetDistance);if(desired<=current||desired>=Bid-stopLevel)continue;}ResetLastError();if(!OrderModify(ticket,desired,0,0,0,clrNONE))Print(EA_NAME," GLOBAL STOP TRAIL FAILED ticket=",ticket," family=",family," error=",GetLastError());else Print(EA_NAME," GLOBAL STOP TRAIL ticket=",ticket," family=",family," old=",DoubleToString(current,Digits)," new=",DoubleToString(desired,Digits)," adverse=",DoubleToString(adverseDistance/Point,1)," trigger=",DoubleToString(triggerPoints,1)," reset=",DoubleToString(resetPoints,1));}}
 
 void RestartEmptyBasket(int direction){if(BasketRestartStep<=0.0)return;if(CountDirectionPositions(direction)!=0||CountDirectionPending(direction)!=0)return;RefreshRates();if(direction==OP_BUY)SendPending(OP_BUYSTOP,Ask+PointsToPrice(BasketRestartStep),Lot,"EAGOLD R7 RESTART BUY");else SendPending(OP_SELLSTOP,Bid-PointsToPrice(BasketRestartStep),Lot,"EAGOLD R7 RESTART SELL");}
 
@@ -193,25 +133,9 @@ bool R9GetNewExposureState(int &lightDirection,double &exposure,double &lightLot
 bool R9HedgeFromActivatedTicket(int ticket){if(!EnableR9Hedge)return(false);if(!OrderSelect(ticket,SELECT_BY_TICKET,MODE_TRADES))return(false);if(!IsEAGOLDOrder())return(false);int type=OrderType();if(type!=OP_BUY&&type!=OP_SELL)return(false);double triggerLot=OrderLots();int light=-1;double exposure=0.0,lightLots=0.0,heavyLots=0.0;if(!R9GetNewExposureState(light,exposure,lightLots,heavyLots)){g_r9HedgeActive=false;return(false);}int heavy=HeavyDirection();if(type!=heavy)return(false);double hedgeLot=NormalizeLot(triggerLot*R9HedgeFraction);double maxHedge=NormalizeLot(exposure*R9BalanceCap);if(maxHedge<Lot)return(false);if(hedgeLot>maxHedge)hedgeLot=maxHedge;hedgeLot=NormalizeLot(hedgeLot);if(hedgeLot<=0.0)return(false);int hedgeTicket=SendMarket(light,hedgeLot,StringFormat("EAGOLD R9 HEDGE FROM #%d",ticket));if(hedgeTicket>0){R9MarkProcessed(hedgeTicket);g_r9HedgeActive=true;Print(EA_NAME," RULE 9 HEDGE: activation=",ticket," triggerLot=",DoubleToString(triggerLot,DigitsLots)," light=",(light==OP_BUY?"BUY":"SELL")," exposure=",DoubleToString(exposure,DigitsLots)," hedgeLot=",DoubleToString(hedgeLot,DigitsLots)," cap=",DoubleToString(R9BalanceCap,2)," newTicket=",hedgeTicket);return(true);}return(false);}
 void Rule9DetectActivatedOrders(){if(!EnableR9Hedge)return;for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder())continue;int type=OrderType();if(type!=OP_BUY&&type!=OP_SELL)continue;int ticket=OrderTicket();if(R9Processed(ticket))continue;R9HedgeFromActivatedTicket(ticket);R9MarkProcessed(ticket);}double exposure=ExposureLots();if(exposure<R9ExposureTriggerLots)g_r9HedgeActive=false;}
 
-void BuyMachine(){
-   if(BuyBasketTargetReached() && DirectionLots(OP_BUY)>DirectionLots(OP_SELL)){
-      Rule10Reduce(OP_BUY);
-   }
-   bool basketClosed=BuyBasketClose();
-   if(basketClosed)RestartEmptyBasket(OP_BUY);
-   BuySingleTakeProfit();
-   BuyRecovery();
-}
-void SellMachine(){
-   if(SellBasketTargetReached() && DirectionLots(OP_SELL)>DirectionLots(OP_BUY)){
-      Rule10Reduce(OP_SELL);
-   }
-   bool basketClosed=SellBasketClose();
-   if(basketClosed)RestartEmptyBasket(OP_SELL);
-   SellSingleTakeProfit();
-   SellRecovery();
-}
+void BuyMachine(){if(BuyBasketTargetReached()&&DirectionLots(OP_BUY)>DirectionLots(OP_SELL))Rule10Reduce(OP_BUY);bool basketClosed=BuyBasketClose();if(basketClosed)RestartEmptyBasket(OP_BUY);BuySingleTakeProfit();BuyRecovery();}
+void SellMachine(){if(SellBasketTargetReached()&&DirectionLots(OP_SELL)>DirectionLots(OP_BUY))Rule10Reduce(OP_SELL);bool basketClosed=SellBasketClose();if(basketClosed)RestartEmptyBasket(OP_SELL);SellSingleTakeProfit();SellRecovery();}
 
-int OnInit(){ArrayResize(g_r9ProcessedTickets,0);g_r9HedgeActive=false;g_panelInitialized=false;g_panelMinProfit=0.0;g_panelMaxLots=0.0;R9SeedExistingPositions();PanelUpdate();Print(EA_NAME," v0.083 initialized. R10=reduce gross exposure preserving net exposure; GLOBAL STOP TRAILING=all STOP orders.");CreateFirstOrdersIfFlat();PanelUpdate();return(INIT_SUCCEEDED);}
+int OnInit(){ArrayResize(g_r9ProcessedTickets,0);g_r9HedgeActive=false;g_panelInitialized=false;g_panelMinProfit=0.0;g_panelMaxLots=0.0;R9SeedExistingPositions();PanelUpdate();Print(EA_NAME," v0.084 initialized. BUY/SELL KEEP-ALIVE active; R10 reduce; GLOBAL STOP TRAILING.");CreateFirstOrdersIfFlat();PanelUpdate();return(INIT_SUCCEEDED);}
 void OnDeinit(const int reason){PanelDelete();}
 void OnTick(){Rule9DetectActivatedOrders();BuyMachine();SellMachine();CreateFirstOrdersIfFlat();TrailAllStopOrders();PanelUpdate();}
