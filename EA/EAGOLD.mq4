@@ -1,5 +1,5 @@
 #property strict
-#property version   "0.091"
+#property version   "0.092"
 #property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 10 + Dynamic Recovery Step Multiplier + Exposure Telemetry Bottom Strip"
 
 input int MagicNumber=1001;
@@ -46,6 +46,9 @@ input bool EnableRecoveryStepMultiplier=true;
 input double RecoveryStepMultiplier=1.15;
 input double RecoveryStepMax=500.0;
 
+// PANEL - visual background height. Adjust this value in the EA inputs.
+input int PanelBackgroundHeight=450;
+
 string EA_NAME="EAGOLD";
 string PANEL_PREFIX="EAGOLD_BT_";
 string R10_MARKER_PREFIX="EAGOLD_R10_MARKER_";
@@ -63,7 +66,7 @@ double NormalizeLot(double lot){if(lot<Lot)lot=Lot;if(MaxOpenLot>0.0&&lot>MaxOpe
 bool IsEAGOLDOrder(){return(OrderSymbol()==Symbol()&&OrderMagicNumber()==MagicNumber);}
 int CountOrdersByType(int type){int count=0;for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder())continue;if(OrderType()==type)count++;}return(count);}
 int CountDirectionPositions(int direction){return(CountOrdersByType(direction==OP_BUY?OP_BUY:OP_SELL));}
-int CountDirectionPending(int direction){return(CountOrdersByType(direction==OP_BUY?OP_BUYSTOP:OP_SELLSTOP));}
+int CountDirectionPending(int direction){return(CountOrdersByType(direction==OP_BUY?OP_BUYSTOP:OP_SELLSTOP);}
 int CountEAGOLDOrders(){int count=0;for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(IsEAGOLDOrder())count++;}return(count);}
 double DirectionBasketProfit(int direction){int type=(direction==OP_BUY?OP_BUY:OP_SELL);double total=0.0;for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder()||OrderType()!=type)continue;total+=OrderProfit()+OrderSwap()+OrderCommission();}return(total);}
 double DirectionLots(int direction){int type=(direction==OP_BUY?OP_BUY:OP_SELL);double total=0.0;for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder()||OrderType()!=type)continue;total+=OrderLots();}return(total);}
@@ -115,7 +118,7 @@ void UpdateExposureTelemetry(){
    GlobalVariableSet(TelemetryKey("TIMESTAMP"),(double)TimeCurrent());
 }
 
-void PanelCreate(){string bg=PANEL_PREFIX+"BG";if(ObjectFind(0,bg)<0){ObjectCreate(0,bg,OBJ_RECTANGLE_LABEL,0,0,0);ObjectSetInteger(0,bg,OBJPROP_CORNER,CORNER_RIGHT_UPPER);ObjectSetInteger(0,bg,OBJPROP_ANCHOR,ANCHOR_RIGHT_UPPER);ObjectSetInteger(0,bg,OBJPROP_XDISTANCE,8);ObjectSetInteger(0,bg,OBJPROP_YDISTANCE,8);ObjectSetInteger(0,bg,OBJPROP_XSIZE,280);ObjectSetInteger(0,bg,OBJPROP_YSIZE,450);ObjectSetInteger(0,bg,OBJPROP_BGCOLOR,clrBlack);ObjectSetInteger(0,bg,OBJPROP_COLOR,clrDimGray);ObjectSetInteger(0,bg,OBJPROP_BORDER_TYPE,BORDER_FLAT);ObjectSetInteger(0,bg,OBJPROP_SELECTABLE,false);ObjectSetInteger(0,bg,OBJPROP_SELECTED,false);ObjectSetInteger(0,bg,OBJPROP_HIDDEN,true);ObjectSetInteger(0,bg,OBJPROP_BACK,false);}}
+void PanelCreate(){string bg=PANEL_PREFIX+"BG";if(ObjectFind(0,bg)<0){ObjectCreate(0,bg,OBJ_RECTANGLE_LABEL,0,0,0);ObjectSetInteger(0,bg,OBJPROP_CORNER,CORNER_RIGHT_UPPER);ObjectSetInteger(0,bg,OBJPROP_ANCHOR,ANCHOR_RIGHT_UPPER);ObjectSetInteger(0,bg,OBJPROP_XDISTANCE,8);ObjectSetInteger(0,bg,OBJPROP_YDISTANCE,8);ObjectSetInteger(0,bg,OBJPROP_XSIZE,280);ObjectSetInteger(0,bg,OBJPROP_YSIZE,PanelBackgroundHeight);ObjectSetInteger(0,bg,OBJPROP_BGCOLOR,clrBlack);ObjectSetInteger(0,bg,OBJPROP_COLOR,clrDimGray);ObjectSetInteger(0,bg,OBJPROP_BORDER_TYPE,BORDER_FLAT);ObjectSetInteger(0,bg,OBJPROP_SELECTABLE,false);ObjectSetInteger(0,bg,OBJPROP_SELECTED,false);ObjectSetInteger(0,bg,OBJPROP_HIDDEN,true);ObjectSetInteger(0,bg,OBJPROP_BACK,false);}}
 void PanelCreateLabel(string id,int row,color clr){string name=PANEL_PREFIX+id;if(ObjectFind(0,name)>=0)return;ObjectCreate(0,name,OBJ_LABEL,0,0,0);ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_RIGHT_UPPER);ObjectSetInteger(0,name,OBJPROP_ANCHOR,ANCHOR_RIGHT_UPPER);ObjectSetInteger(0,name,OBJPROP_XDISTANCE,18);ObjectSetInteger(0,name,OBJPROP_YDISTANCE,18+row*17);ObjectSetInteger(0,name,OBJPROP_FONTSIZE,9);ObjectSetString(0,name,OBJPROP_FONT,"Consolas");ObjectSetInteger(0,name,OBJPROP_COLOR,clr);ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);ObjectSetInteger(0,name,OBJPROP_SELECTED,false);ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);ObjectSetInteger(0,name,OBJPROP_BACK,false);}
 void PanelCreateBottomLabel(string id,int row,color clr){string name=PANEL_PREFIX+id;if(ObjectFind(0,name)>=0)return;ObjectCreate(0,name,OBJ_LABEL,0,0,0);ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_RIGHT_LOWER);ObjectSetInteger(0,name,OBJPROP_ANCHOR,ANCHOR_RIGHT_LOWER);ObjectSetInteger(0,name,OBJPROP_XDISTANCE,18);ObjectSetInteger(0,name,OBJPROP_YDISTANCE,12+row*17);ObjectSetInteger(0,name,OBJPROP_FONTSIZE,9);ObjectSetString(0,name,OBJPROP_FONT,"Consolas");ObjectSetInteger(0,name,OBJPROP_COLOR,clr);ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);ObjectSetInteger(0,name,OBJPROP_SELECTED,false);ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);ObjectSetInteger(0,name,OBJPROP_BACK,false);}
 void PanelSet(string id,string text,int row,color clr){string name=PANEL_PREFIX+id;PanelCreateLabel(id,row,clr);ObjectSetString(0,name,OBJPROP_TEXT,text);ObjectSetInteger(0,name,OBJPROP_COLOR,clr);}
@@ -133,7 +136,7 @@ void PanelUpdate(){
    int totalPending=buyPending+sellPending,openPositions=buyCount+sellCount,buyRecovery=RecoveryLevel(OP_BUY),sellRecovery=RecoveryLevel(OP_SELL),recoveryLevel=MathMax(buyRecovery,sellRecovery);
    if(!g_panelInitialized){g_panelMinProfit=totalProfit;g_panelMaxLots=totalLots;g_panelInitialized=true;}else{if(totalProfit<g_panelMinProfit)g_panelMinProfit=totalProfit;if(totalLots>g_panelMaxLots)g_panelMaxLots=totalLots;}
    int row=0;
-   PanelSet("TITLE","EAGOLD  v0.091",row++,clrWhite);PanelSet("SEP1","==============================",row++,clrSilver);
+   PanelSet("TITLE","EAGOLD  v0.092",row++,clrWhite);PanelSet("SEP1","==============================",row++,clrSilver);
    PanelSet("BUY",StringFormat("BUY   %3d pos   %6s lot",buyCount,PanelLots(buyLots)),row++,clrLime);PanelSet("BUYPL",StringFormat("P/L       %12s",PanelMoney(buyProfit)),row++,clrLime);PanelSet("BUYT",StringFormat("Target    %12s",PanelMoney(buyCount*TakeProfit)),row++,clrSilver);
    PanelSet("SELL",StringFormat("SELL  %3d pos   %6s lot",sellCount,PanelLots(sellLots)),row++,clrTomato);PanelSet("SELLPL",StringFormat("P/L       %12s",PanelMoney(sellProfit)),row++,clrTomato);PanelSet("SELLT",StringFormat("Target    %12s",PanelMoney(sellCount*TakeProfit)),row++,clrSilver);
    PanelSet("SEP2","==============================",row++,clrSilver);PanelSet("TOTAL",StringFormat("TOTAL P/L %12s",PanelMoney(totalProfit)),row++,clrWhite);PanelSet("EQUITY",StringFormat("EQUITY     %12s",PanelMoney(equity)),row++,clrAqua);PanelSet("ACCUM",StringFormat("LUCRO ACUM. %9s",PanelMoney(accumulated)),row++,accumulated>=0.0?clrLime:clrTomato);PanelSet("MIN",StringFormat("MENOR P/L %11s",PanelMoney(g_panelMinProfit)),row++,clrYellow);PanelSet("LOTS",StringFormat("LOTES ATUAIS %9s",PanelLots(totalLots)),row++,clrWhite);PanelSet("MAXLOTS",StringFormat("MAIOR ACUM. %9s",PanelLots(g_panelMaxLots)),row++,clrYellow);PanelSet("NET",StringFormat("EXPOS. LIQ. %10s",PanelLots(netLots)),row++,clrWhite);PanelSet("PEND",StringFormat("PENDENTES     %6d",totalPending),row++,clrSilver);PanelSet("PBUY",StringFormat("BUY STOP      %6d",buyPending),row++,clrSilver);PanelSet("PSELL",StringFormat("SELL STOP     %6d",sellPending),row++,clrSilver);
@@ -189,6 +192,6 @@ bool R9HedgeFromActivatedTicket(int ticket){if(!EnableR9Hedge)return(false);if(!
 void Rule9DetectActivatedOrders(){if(!EnableR9Hedge)return;for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder())continue;int type=OrderType();if(type!=OP_BUY&&type!=OP_SELL)continue;int ticket=OrderTicket();if(R9Processed(ticket))continue;R9HedgeFromActivatedTicket(ticket);R9MarkProcessed(ticket);}double exposure=ExposureLots();if(exposure<R9ExposureTriggerLots)g_r9HedgeActive=false;}
 void BuyMachine(){if(BuyBasketTargetReached()&&DirectionLots(OP_BUY)>DirectionLots(OP_SELL))Rule10Reduce(OP_BUY);bool basketClosed=BuyBasketClose();if(basketClosed)RestartEmptyBasket(OP_BUY);BuySingleTakeProfit();BuyRecovery();}
 void SellMachine(){if(SellBasketTargetReached()&&DirectionLots(OP_SELL)>DirectionLots(OP_BUY))Rule10Reduce(OP_SELL);bool basketClosed=SellBasketClose();if(basketClosed)RestartEmptyBasket(OP_SELL);SellSingleTakeProfit();SellRecovery();}
-int OnInit(){ArrayResize(g_r9ProcessedTickets,0);g_r9HedgeActive=false;g_panelInitialized=false;g_panelMinProfit=0.0;g_panelMaxLots=0.0;g_r10LastAction=0;R9SeedExistingPositions();UpdateExposureTelemetry();PanelUpdate();Print(EA_NAME," v0.091 initialized. R12 exposure telemetry active; telemetry is observation/persistence only and does not block or alter trading. R11 dynamic recovery step multiplier active=",EnableRecoveryStepMultiplier," multiplier=",DoubleToString(RecoveryStepMultiplier,2)," max=",DoubleToString(RecoveryStepMax,1),"; R10 profit-funded partial grid reduction + symmetric fallback; GLOBAL STOP TRAILING.");CreateFirstOrdersIfFlat();UpdateExposureTelemetry();PanelUpdate();return(INIT_SUCCEEDED);}
+int OnInit(){ArrayResize(g_r9ProcessedTickets,0);g_r9HedgeActive=false;g_panelInitialized=false;g_panelMinProfit=0.0;g_panelMaxLots=0.0;g_r10LastAction=0;R9SeedExistingPositions();UpdateExposureTelemetry();PanelUpdate();Print(EA_NAME," v0.092 initialized. R12 exposure telemetry active; telemetry is observation/persistence only and does not block or alter trading. R11 dynamic recovery step multiplier active=",EnableRecoveryStepMultiplier," multiplier=",DoubleToString(RecoveryStepMultiplier,2)," max=",DoubleToString(RecoveryStepMax,1),"; R10 profit-funded partial grid reduction + symmetric fallback; GLOBAL STOP TRAILING.");CreateFirstOrdersIfFlat();UpdateExposureTelemetry();PanelUpdate();return(INIT_SUCCEEDED);}
 void OnDeinit(const int reason){PanelDelete();}
 void OnTick(){Rule9DetectActivatedOrders();BuyMachine();SellMachine();CreateFirstOrdersIfFlat();TrailAllStopOrders();UpdateExposureTelemetry();PanelUpdate();}
