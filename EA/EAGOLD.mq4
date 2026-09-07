@@ -1,6 +1,6 @@
 #property strict
-#property version   "0.085"
-#property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 10 + Global STOP Trailing + R10 Visual Markers + Backtest Panel"
+#property version   "0.086"
+#property description "EAGOLD - BUY/SELL independent machines - Rules 1 to 10 + Global STOP Trailing + R10 Premium Visual Markers + Backtest Panel"
 
 input int MagicNumber=1001;
 input double Lot=0.01;
@@ -32,6 +32,10 @@ input double R9BalanceCap=0.50;
 input bool EnableR10Reduce=true;
 input double R10MinExposureLots=0.01;
 input bool EnableR10VisualMarker=true;
+input string R10MarkerFont="Segoe UI Semibold";
+input int R10MarkerFontSize=10;
+input color R10MarkerColor=clrYellow;
+input double R10MarkerOffsetPoints=25.0;
 
 string EA_NAME="EAGOLD";
 string PANEL_PREFIX="EAGOLD_BT_";
@@ -61,7 +65,7 @@ void PanelSet(string id,string text,int row,color clr){string name=PANEL_PREFIX+
 void PanelDelete(){string ids[]={"BG","TITLE","SEP1","BUY","BUYPL","BUYT","SELL","SELLPL","SELLT","SEP2","TOTAL","MIN","LOTS","MAXLOTS","NET","PEND","PBUY","PSELL","HEDGE","HEDGE2","R10","SEP3","TIME"};for(int i=0;i<ArraySize(ids);i++){string name=PANEL_PREFIX+ids[i];if(ObjectFind(0,name)>=0)ObjectDelete(name);}}
 string PanelMoney(double value){return(DoubleToString(value,2));}
 string PanelLots(double value){return(DoubleToString(value,2));}
-void PanelUpdate(){PanelCreate();int buyCount=0,sellCount=0,buyPending=0,sellPending=0;double buyLots=0.0,sellLots=0.0,buyProfit=0.0,sellProfit=0.0;for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder())continue;int type=OrderType();if(type==OP_BUY){buyCount++;buyLots+=OrderLots();buyProfit+=OrderProfit()+OrderSwap()+OrderCommission();}else if(type==OP_SELL){sellCount++;sellLots+=OrderLots();sellProfit+=OrderProfit()+OrderSwap()+OrderCommission();}else if(type==OP_BUYSTOP)buyPending++;else if(type==OP_SELLSTOP)sellPending++;}double totalProfit=buyProfit+sellProfit,totalLots=buyLots+sellLots,netLots=buyLots-sellLots;int totalPending=buyPending+sellPending;if(!g_panelInitialized){g_panelMinProfit=totalProfit;g_panelMaxLots=totalLots;g_panelInitialized=true;}else{if(totalProfit<g_panelMinProfit)g_panelMinProfit=totalProfit;if(totalLots>g_panelMaxLots)g_panelMaxLots=totalLots;}int row=0;PanelSet("TITLE","EAGOLD  v0.085",row++,clrWhite);PanelSet("SEP1","==============================",row++,clrSilver);PanelSet("BUY",StringFormat("BUY   %3d pos   %6s lot",buyCount,PanelLots(buyLots)),row++,clrLime);PanelSet("BUYPL",StringFormat("P/L       %12s",PanelMoney(buyProfit)),row++,clrLime);PanelSet("BUYT",StringFormat("Target    %12s",PanelMoney(buyCount*TakeProfit)),row++,clrSilver);PanelSet("SELL",StringFormat("SELL  %3d pos   %6s lot",sellCount,PanelLots(sellLots)),row++,clrTomato);PanelSet("SELLPL",StringFormat("P/L       %12s",PanelMoney(sellProfit)),row++,clrTomato);PanelSet("SELLT",StringFormat("Target    %12s",PanelMoney(sellCount*TakeProfit)),row++,clrSilver);PanelSet("SEP2","==============================",row++,clrSilver);PanelSet("TOTAL",StringFormat("TOTAL P/L %12s",PanelMoney(totalProfit)),row++,clrWhite);PanelSet("MIN",StringFormat("MENOR P/L %11s",PanelMoney(g_panelMinProfit)),row++,clrYellow);PanelSet("LOTS",StringFormat("LOTES ATUAIS %9s",PanelLots(totalLots)),row++,clrWhite);PanelSet("MAXLOTS",StringFormat("MAIOR ACUM. %9s",PanelLots(g_panelMaxLots)),row++,clrYellow);PanelSet("NET",StringFormat("EXPOS. LIQ. %10s",PanelLots(netLots)),row++,clrWhite);PanelSet("PEND",StringFormat("PENDENTES     %6d",totalPending),row++,clrSilver);PanelSet("PBUY",StringFormat("BUY STOP      %6d",buyPending),row++,clrSilver);PanelSet("PSELL",StringFormat("SELL STOP     %6d",sellPending),row++,clrSilver);if(g_r9HedgeActive){int heavy=HeavyDirection();string side=(heavy==OP_BUY?"SELL":"BUY");PanelSet("HEDGE","HEDGE: ATIVO",row++,clrYellow);PanelSet("HEDGE2",StringFormat("BALANCEANDO %s  EXP %s",side,PanelLots(ExposureLots())),row++,clrYellow);}else{PanelSet("HEDGE","HEDGE: INATIVO",row++,clrSilver);PanelSet("HEDGE2",StringFormat("EXPOS. %s",PanelLots(ExposureLots())),row++,clrSilver);}PanelSet("R10",StringFormat("R10 REDUCE %s",EnableR10Reduce?"ON":"OFF"),row++,EnableR10Reduce?clrYellow:clrSilver);PanelSet("SEP3","==============================",row++,clrSilver);PanelSet("TIME",TimeToString(TimeCurrent(),TIME_SECONDS),row++,clrSilver);ChartRedraw(0);}
+void PanelUpdate(){PanelCreate();int buyCount=0,sellCount=0,buyPending=0,sellPending=0;double buyLots=0.0,sellLots=0.0,buyProfit=0.0,sellProfit=0.0;for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder())continue;int type=OrderType();if(type==OP_BUY){buyCount++;buyLots+=OrderLots();buyProfit+=OrderProfit()+OrderSwap()+OrderCommission();}else if(type==OP_SELL){sellCount++;sellLots+=OrderLots();sellProfit+=OrderProfit()+OrderSwap()+OrderCommission();}else if(type==OP_BUYSTOP)buyPending++;else if(type==OP_SELLSTOP)sellPending++;}double totalProfit=buyProfit+sellProfit,totalLots=buyLots+sellLots,netLots=buyLots-sellLots;int totalPending=buyPending+sellPending;if(!g_panelInitialized){g_panelMinProfit=totalProfit;g_panelMaxLots=totalLots;g_panelInitialized=true;}else{if(totalProfit<g_panelMinProfit)g_panelMinProfit=totalProfit;if(totalLots>g_panelMaxLots)g_panelMaxLots=totalLots;}int row=0;PanelSet("TITLE","EAGOLD  v0.086",row++,clrWhite);PanelSet("SEP1","==============================",row++,clrSilver);PanelSet("BUY",StringFormat("BUY   %3d pos   %6s lot",buyCount,PanelLots(buyLots)),row++,clrLime);PanelSet("BUYPL",StringFormat("P/L       %12s",PanelMoney(buyProfit)),row++,clrLime);PanelSet("BUYT",StringFormat("Target    %12s",PanelMoney(buyCount*TakeProfit)),row++,clrSilver);PanelSet("SELL",StringFormat("SELL  %3d pos   %6s lot",sellCount,PanelLots(sellLots)),row++,clrTomato);PanelSet("SELLPL",StringFormat("P/L       %12s",PanelMoney(sellProfit)),row++,clrTomato);PanelSet("SELLT",StringFormat("Target    %12s",PanelMoney(sellCount*TakeProfit)),row++,clrSilver);PanelSet("SEP2","==============================",row++,clrSilver);PanelSet("TOTAL",StringFormat("TOTAL P/L %12s",PanelMoney(totalProfit)),row++,clrWhite);PanelSet("MIN",StringFormat("MENOR P/L %11s",PanelMoney(g_panelMinProfit)),row++,clrYellow);PanelSet("LOTS",StringFormat("LOTES ATUAIS %9s",PanelLots(totalLots)),row++,clrWhite);PanelSet("MAXLOTS",StringFormat("MAIOR ACUM. %9s",PanelLots(g_panelMaxLots)),row++,clrYellow);PanelSet("NET",StringFormat("EXPOS. LIQ. %10s",PanelLots(netLots)),row++,clrWhite);PanelSet("PEND",StringFormat("PENDENTES     %6d",totalPending),row++,clrSilver);PanelSet("PBUY",StringFormat("BUY STOP      %6d",buyPending),row++,clrSilver);PanelSet("PSELL",StringFormat("SELL STOP     %6d",sellPending),row++,clrSilver);if(g_r9HedgeActive){int heavy=HeavyDirection();string side=(heavy==OP_BUY?"SELL":"BUY");PanelSet("HEDGE","HEDGE: ATIVO",row++,clrYellow);PanelSet("HEDGE2",StringFormat("BALANCEANDO %s  EXP %s",side,PanelLots(ExposureLots())),row++,clrYellow);}else{PanelSet("HEDGE","HEDGE: INATIVO",row++,clrSilver);PanelSet("HEDGE2",StringFormat("EXPOS. %s",PanelLots(ExposureLots())),row++,clrSilver);}PanelSet("R10",StringFormat("R10 REDUCE %s",EnableR10Reduce?"ON":"OFF"),row++,EnableR10Reduce?clrYellow:clrSilver);PanelSet("SEP3","==============================",row++,clrSilver);PanelSet("TIME",TimeToString(TimeCurrent(),TIME_SECONDS),row++,clrSilver);ChartRedraw(0);}
 
 int SendPending(int type,double price,double lots,string comment){RefreshRates();double stopLevel=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;price=NormalizePrice(price);lots=NormalizeLot(lots);if(type==OP_BUYSTOP&&price<=Ask+stopLevel)return(-1);if(type==OP_SELLSTOP&&price>=Bid-stopLevel)return(-1);ResetLastError();int ticket=OrderSend(Symbol(),type,lots,price,0,0,0,comment,MagicNumber,0,clrNONE);if(ticket<0)Print(EA_NAME," OrderSend failed. type=",type," error=",GetLastError()," comment=",comment);else Print(EA_NAME," pending created. ticket=",ticket," type=",type," price=",DoubleToString(price,Digits)," lot=",DoubleToString(lots,DigitsLots)," comment=",comment);return(ticket);}
 int SendMarket(int type,double lots,string comment){RefreshRates();lots=NormalizeLot(lots);double price=(type==OP_BUY?Ask:Bid);ResetLastError();int ticket=OrderSend(Symbol(),type,lots,NormalizePrice(price),0,0,0,comment,MagicNumber,0,clrNONE);if(ticket<0)Print(EA_NAME," market send failed. type=",type," error=",GetLastError()," comment=",comment);else Print(EA_NAME," market created. ticket=",ticket," type=",type," lot=",DoubleToString(lots,DigitsLots)," comment=",comment);return(ticket);}
@@ -88,7 +92,43 @@ void SellSingleTakeProfit(){if(CountDirectionPositions(OP_SELL)!=1)return;if(!Ca
 bool BuyBasketTargetReached(){int count=CountDirectionPositions(OP_BUY);if(count<=1||TakeProfit<=0.0)return(false);return(DirectionBasketProfit(OP_BUY)>=count*TakeProfit);}
 bool SellBasketTargetReached(){int count=CountDirectionPositions(OP_SELL);if(count<=1||TakeProfit<=0.0)return(false);return(DirectionBasketProfit(OP_SELL)>=count*TakeProfit);}
 
-void CreateR10VisualMarker(int targetDirection,double reducedLots,double realizedMoney,double beforeExposure,double afterExposure,double beforeGross,double afterGross){if(!EnableR10VisualMarker)return;if(reducedLots<Lot)return;RefreshRates();double price=(Bid+Ask)/2.0;string side=(targetDirection==OP_BUY?"BUY":"SELL");string name=R10_MARKER_PREFIX+IntegerToString(GetTickCount())+"_"+IntegerToString(MathRand());string text=StringFormat("R10 %s\n-%.2f LOT\n$ %.2f",side,reducedLots,realizedMoney);if(ObjectCreate(0,name,OBJ_TEXT,0,TimeCurrent(),NormalizePrice(price))){ObjectSetString(0,name,OBJPROP_TEXT,text);ObjectSetString(0,name,OBJPROP_FONT,"Arial Bold");ObjectSetInteger(0,name,OBJPROP_FONTSIZE,10);ObjectSetInteger(0,name,OBJPROP_COLOR,clrYellow);ObjectSetInteger(0,name,OBJPROP_ANCHOR,ANCHOR_LEFT_UPPER);ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);ObjectSetInteger(0,name,OBJPROP_SELECTED,false);ObjectSetInteger(0,name,OBJPROP_HIDDEN,false);ObjectSetInteger(0,name,OBJPROP_BACK,false);Print(EA_NAME," R10 VISUAL MARKER: ",side," reduced=",DoubleToString(reducedLots,DigitsLots)," realized=$",DoubleToString(realizedMoney,2)," exposure=",DoubleToString(beforeExposure,DigitsLots)," -> ",DoubleToString(afterExposure,DigitsLots)," gross=",DoubleToString(beforeGross,DigitsLots)," -> ",DoubleToString(afterGross,DigitsLots));ChartRedraw(0);}}
+void CreateR10VisualMarker(int targetDirection,double reducedLots,double realizedMoney,double beforeExposure,double afterExposure,double beforeGross,double afterGross){
+   if(!EnableR10VisualMarker||reducedLots<Lot)return;
+   RefreshRates();
+   double price=NormalizePrice((Bid+Ask)/2.0);
+   string side=(targetDirection==OP_BUY?"BUY":"SELL");
+   string base=R10_MARKER_PREFIX+IntegerToString(GetTickCount())+"_"+IntegerToString(MathRand());
+   string shadow=base+"_SHADOW";
+   string main=base+"_TEXT";
+   string text=StringFormat("R10 %s\n-%.2f LOT\n$ %.2f",side,reducedLots,realizedMoney);
+   double shadowPrice=NormalizePrice(price+PointsToPrice(R10MarkerOffsetPoints));
+   double textPrice=NormalizePrice(price+PointsToPrice(R10MarkerOffsetPoints+3.0));
+   datetime stamp=TimeCurrent();
+   if(ObjectCreate(0,shadow,OBJ_TEXT,0,stamp,shadowPrice)){
+      ObjectSetString(0,shadow,OBJPROP_TEXT,text);
+      ObjectSetString(0,shadow,OBJPROP_FONT,R10MarkerFont);
+      ObjectSetInteger(0,shadow,OBJPROP_FONTSIZE,R10MarkerFontSize);
+      ObjectSetInteger(0,shadow,OBJPROP_COLOR,clrBlack);
+      ObjectSetInteger(0,shadow,OBJPROP_ANCHOR,ANCHOR_LEFT_UPPER);
+      ObjectSetInteger(0,shadow,OBJPROP_SELECTABLE,false);
+      ObjectSetInteger(0,shadow,OBJPROP_SELECTED,false);
+      ObjectSetInteger(0,shadow,OBJPROP_HIDDEN,false);
+      ObjectSetInteger(0,shadow,OBJPROP_BACK,true);
+   }
+   if(ObjectCreate(0,main,OBJ_TEXT,0,stamp,textPrice)){
+      ObjectSetString(0,main,OBJPROP_TEXT,text);
+      ObjectSetString(0,main,OBJPROP_FONT,R10MarkerFont);
+      ObjectSetInteger(0,main,OBJPROP_FONTSIZE,R10MarkerFontSize);
+      ObjectSetInteger(0,main,OBJPROP_COLOR,R10MarkerColor);
+      ObjectSetInteger(0,main,OBJPROP_ANCHOR,ANCHOR_LEFT_UPPER);
+      ObjectSetInteger(0,main,OBJPROP_SELECTABLE,false);
+      ObjectSetInteger(0,main,OBJPROP_SELECTED,false);
+      ObjectSetInteger(0,main,OBJPROP_HIDDEN,false);
+      ObjectSetInteger(0,main,OBJPROP_BACK,false);
+   }
+   Print(EA_NAME," R10 VISUAL MARKER: ",side," reduced=",DoubleToString(reducedLots,DigitsLots)," realized=$",DoubleToString(realizedMoney,2)," exposure=",DoubleToString(beforeExposure,DigitsLots)," -> ",DoubleToString(afterExposure,DigitsLots)," gross=",DoubleToString(beforeGross,DigitsLots)," -> ",DoubleToString(afterGross,DigitsLots));
+   ChartRedraw(0);
+}
 
 bool ReduceDirectionByLots(int direction,double lotsToReduce,double &realizedMoney){realizedMoney=0.0;if(lotsToReduce<Lot)return(false);int type=(direction==OP_BUY?OP_BUY:OP_SELL);int tickets[];ArrayResize(tickets,0);double ticketLots[];ArrayResize(ticketLots,0);for(int i=OrdersTotal()-1;i>=0;i--){if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))continue;if(!IsEAGOLDOrder()||OrderType()!=type)continue;int n=ArraySize(tickets);ArrayResize(tickets,n+1);ArrayResize(ticketLots,n+1);tickets[n]=OrderTicket();ticketLots[n]=OrderLots();}for(int a=0;a<ArraySize(tickets)-1;a++)for(int b=a+1;b<ArraySize(tickets);b++)if(ticketLots[b]>ticketLots[a]){int ti=tickets[a];tickets[a]=tickets[b];tickets[b]=ti;double tl=ticketLots[a];ticketLots[a]=ticketLots[b];ticketLots[b]=tl;}double remaining=NormalizeDouble(lotsToReduce,DigitsLots);bool changed=false;for(int j=0;j<ArraySize(tickets)&&remaining>=Lot;j++){if(!OrderSelect(tickets[j],SELECT_BY_TICKET,MODE_TRADES))continue;if(!IsEAGOLDOrder()||OrderType()!=type)continue;double available=OrderLots();double closeLots=NormalizeDouble(MathMin(available,remaining),DigitsLots);if(closeLots<Lot)continue;double money=0.0;if(CloseMarketOrderLots(tickets[j],closeLots,money)){remaining=NormalizeDouble(remaining-closeLots,DigitsLots);realizedMoney+=money;changed=true;}}return(changed&&remaining<Lot);}
 
@@ -114,6 +154,6 @@ void Rule9DetectActivatedOrders(){if(!EnableR9Hedge)return;for(int i=OrdersTotal
 void BuyMachine(){if(BuyBasketTargetReached()&&DirectionLots(OP_BUY)>DirectionLots(OP_SELL))Rule10Reduce(OP_BUY);bool basketClosed=BuyBasketClose();if(basketClosed)RestartEmptyBasket(OP_BUY);BuySingleTakeProfit();BuyRecovery();}
 void SellMachine(){if(SellBasketTargetReached()&&DirectionLots(OP_SELL)>DirectionLots(OP_BUY))Rule10Reduce(OP_SELL);bool basketClosed=SellBasketClose();if(basketClosed)RestartEmptyBasket(OP_SELL);SellSingleTakeProfit();SellRecovery();}
 
-int OnInit(){ArrayResize(g_r9ProcessedTickets,0);g_r9HedgeActive=false;g_panelInitialized=false;g_panelMinProfit=0.0;g_panelMaxLots=0.0;R9SeedExistingPositions();PanelUpdate();Print(EA_NAME," v0.085 initialized. BUY/SELL KEEP-ALIVE active; R10 reduce + visual markers; GLOBAL STOP TRAILING.");CreateFirstOrdersIfFlat();PanelUpdate();return(INIT_SUCCEEDED);}
+int OnInit(){ArrayResize(g_r9ProcessedTickets,0);g_r9HedgeActive=false;g_panelInitialized=false;g_panelMinProfit=0.0;g_panelMaxLots=0.0;R9SeedExistingPositions();PanelUpdate();Print(EA_NAME," v0.086 initialized. BUY/SELL KEEP-ALIVE active; R10 reduce + premium visual markers; GLOBAL STOP TRAILING.");CreateFirstOrdersIfFlat();PanelUpdate();return(INIT_SUCCEEDED);}
 void OnDeinit(const int reason){PanelDelete();}
 void OnTick(){Rule9DetectActivatedOrders();BuyMachine();SellMachine();CreateFirstOrdersIfFlat();TrailAllStopOrders();PanelUpdate();}
