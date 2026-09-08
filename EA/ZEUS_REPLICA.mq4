@@ -1,62 +1,50 @@
 //+------------------------------------------------------------------+
 //| ZEUS_REPLICA.mq4                                                 |
-//| ZEUS Replica - controlled reverse engineering                    |
+//| ZEUS Gold Hedge V1.2 - incremental reverse engineering           |
 //|                                                                  |
-//| V0.2                                                             |
+//| V0.2 - STAGE 2: RECONCILIATION ONLY                             |
 //|                                                                  |
-//| Scope                                                             |
-//|   - proven bootstrap                                             |
-//|   - basket reconciliation                                       |
-//|   - pending activation detection                                 |
-//|   - independent BUY / SELL ladder                               |
-//|   - FirstStep / MinDistance / Step fallback                     |
-//|   - empirical lot engine                                         |
+//| APPROVED BASE                                                     |
+//|   V0.1 proved: OnInit -> OnTick -> initial OrderSend             |
 //|                                                                  |
-//| NOT IMPLEMENTED YET                                               |
-//|   - StopProfit                                                    |
-//|   - CloseBuySell                                                  |
-//|   - Global CloseAll / MaxLoss                                     |
-//|   - CloseBy orchestration                                         |
+//| THIS STAGE                                                       |
+//|   - preserve the proven two initial pending orders               |
+//|   - inspect current orders every tick                            |
+//|   - classify BUY/SELL market and pending orders                  |
+//|   - report count and lots                                        |
+//|   - detect market-count transitions (activation evidence)        |
+//|                                                                  |
+//| INTENTIONALLY NOT IMPLEMENTED                                    |
+//|   - ladder                                                        |
 //|   - trailing                                                      |
+//|   - exits                                                         |
+//|   - CloseBy                                                       |
+//|   - Step / MinDistance candidate creation                        |
+//|                                                                  |
+//| RULE: Stage 2 must not create any order beyond the two initial   |
+//|       orders.                                                     |
 //+------------------------------------------------------------------+
 #property strict
 #property version   "0.2"
-#property description "ZEUS Replica V0.2 - reconciliation, activation and first ladder"
+#property description "ZEUS Replica V0.2 - Stage 2 reconciliation only"
 
-input int      Magic               = 1001;
-input double   lot                 = 0.01;
-input double   K_Lot               = 1.20;
-input int      DigitsLot           = 2;
-input double   PlusLot             = 0.01;
-input double   Maxlot              = 0.62;
-input int      MaxSpread           = 100;
-input int      FirstStep           = 160;
-input int      MinDistance         = 340;
-input int      Step                = 80;
-input bool     EnableLadderEntries = true;
-input bool     EnableTelemetry     = true;
+input int      Magic            = 1001;
+input double   Lots             = 0.01;
+input int      FirstStep        = 160;
+input int      MaxSpread        = 100;
+input bool     SendInitialOrders= true;
+input bool     EnableLogs       = true;
 
-string PREFIX="ZEUS_REPLICA";
-bool   g_first_tick=false;
-int    g_last_buy_count=-1;
-int    g_last_sell_count=-1;
-
-struct SideState
-{
-   int market_count;
-   int pending_count;
-   double market_lots;
-   double pending_lots;
-   double lowest;
-   double highest;
-};
+bool g_first_tick=false;
+int  g_prev_buy_market=-1;
+int  g_prev_sell_market=-1;
 
 void Log(string text)
 {
-   if(EnableTelemetry) Print(PREFIX," | ",text);
+   if(EnableLogs) Print("ZEUS_REPLICA | ",text);
 }
 
-string SideName(int side)
+string SideText(int side)
 {
    return(side==OP_BUY ? "BUY" : "SELL");
 }
@@ -66,67 +54,31 @@ bool IsOurOrder()
    return(OrderSymbol()==Symbol() && OrderMagicNumber()==Magic);
 }
 
-void GetSideState(int side,SideState &s)
+bool IsOurPending(int type)
 {
-   s.market_count=0;
-   s.pending_count=0;
-   s.market_lots=0.0;
-   s.pending_lots=0.0;
-   s.lowest=DBL_MAX;
-   s.highest=-DBL_MAX;
-
    for(int i=OrdersTotal()-1;i>=0;i--)
    {
       if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
       if(!IsOurOrder()) continue;
-
-      int type=OrderType();
-      bool market=(type==OP_BUY || type==OP_SELL);
-      bool same_side=(side==OP_BUY ?
-                      (type==OP_BUY || type==OP_BUYSTOP || type==OP_BUYLIMIT) :
-                      (type==OP_SELL || type==OP_SELLSTOP || type==OP_SELLLIMIT));
-      if(!same_side) continue;
-
-      double price=OrderOpenPrice();
-      if(price<s.lowest)  s.lowest=price;
-      if(price>s.highest) s.highest=price;
-
-      if(market)
-      {
-         s.market_count++;
-         s.market_lots+=OrderLots();
-      }
-      else
-      {
-         s.pending_count++;
-         s.pending_lots+=OrderLots();
-      }
+      if(OrderType()==type) return(true);
    }
-
-   if(s.lowest==DBL_MAX) s.lowest=0.0;
-   if(s.highest==-DBL_MAX) s.highest=0.0;
+   return(false);
 }
 
 double NormalizeLots(double value)
 {
-   double broker_min=MarketInfo(Symbol(),MODE_MINLOT);
-   double broker_max=MarketInfo(Symbol(),MODE_MAXLOT);
+   double min_lot=MarketInfo(Symbol(),MODE_MINLOT);
+   double max_lot=MarketInfo(Symbol(),MODE_MAXLOT);
    double step=MarketInfo(Symbol(),MODE_LOTSTEP);
-   double cap=MathMin(Maxlot,broker_max);
 
-   value=MathMin(value,cap);
-   value=MathMax(value,broker_min);
+   value=MathMax(value,min_lot);
+   value=MathMin(value,max_lot);
 
    if(step>0.0)
       value=MathFloor(value/step+1e-8)*step;
 
-   value=MathMax(value,broker_min);
-   return NormalizeDouble(value,DigitsLot);
-}
-
-double ZeusLot(int n)
-{
-   return NormalizeLots(lot*MathPow(K_Lot,n)+n*PlusLot);
+   value=MathMax(value,min_lot);
+   return(NormalizeDouble(value,2));
 }
 
 bool ContextOK()
@@ -138,35 +90,24 @@ bool ContextOK()
    {
       Log("CONTEXT REJECT | spread="+DoubleToString(spread,1)+
           " MaxSpread="+IntegerToString(MaxSpread));
-      return false;
+      return(false);
    }
 
    if(MarketInfo(Symbol(),MODE_TRADEALLOWED)==0)
    {
       Log("CONTEXT REJECT | symbol trade disabled");
-      return false;
+      return(false);
    }
 
-   // IsTradeAllowed() is deliberately not used as an absolute blocker
-   // in the Strategy Tester. V0.1 proved OrderSend works in this context.
+   // Strategy Tester proved OrderSend works without using
+   // IsTradeAllowed() as an absolute blocker.
    if(!IsTesting() && !IsTradeAllowed())
    {
       Log("CONTEXT REJECT | trade not allowed");
-      return false;
+      return(false);
    }
 
-   return true;
-}
-
-bool HasPending(int type)
-{
-   for(int i=OrdersTotal()-1;i>=0;i--)
-   {
-      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
-      if(!IsOurOrder()) continue;
-      if(OrderType()==type) return true;
-   }
-   return false;
+   return(true);
 }
 
 bool BrokerDistanceOK(int type,double price)
@@ -176,34 +117,46 @@ bool BrokerDistanceOK(int type,double price)
 
    if(type==OP_BUYSTOP && price<=Ask+stop_level)
    {
-      Log("SEND REJECT | BUY STOP broker distance | price="+
-          DoubleToString(price,Digits)+" ask="+DoubleToString(Ask,Digits));
-      return false;
+      Log("SEND REJECT | BUY STOP broker distance");
+      return(false);
    }
 
    if(type==OP_SELLSTOP && price>=Bid-stop_level)
    {
-      Log("SEND REJECT | SELL STOP broker distance | price="+
-          DoubleToString(price,Digits)+" bid="+DoubleToString(Bid,Digits));
-      return false;
+      Log("SEND REJECT | SELL STOP broker distance");
+      return(false);
    }
 
-   return true;
+   return(true);
 }
 
-int SendPending(int type,double price,double lots,string reason)
+bool SendInitial(int type)
 {
+   if(!ContextOK()) return(false);
+
    RefreshRates();
-   price=NormalizeDouble(price,Digits);
-   lots=NormalizeLots(lots);
 
-   if(!BrokerDistanceOK(type,price)) return -1;
+   double lots=NormalizeLots(Lots);
+   double price=0.0;
+   string side="";
 
-   string side=(type==OP_BUYSTOP ? "BUY" : "SELL");
+   if(type==OP_BUYSTOP)
+   {
+      price=NormalizeDouble(Ask+FirstStep*Point,Digits);
+      side="BUY STOP";
+   }
+   else if(type==OP_SELLSTOP)
+   {
+      price=NormalizeDouble(Bid-FirstStep*Point,Digits);
+      side="SELL STOP";
+   }
+   else return(false);
+
+   if(!BrokerDistanceOK(type,price)) return(false);
+
    Log("SEND ATTEMPT | side="+side+
-       " reason="+reason+
        " price="+DoubleToString(price,Digits)+
-       " lots="+DoubleToString(lots,DigitsLot));
+       " lots="+DoubleToString(lots,2));
 
    ResetLastError();
    int ticket=OrderSend(Symbol(),type,lots,price,0,0,0,
@@ -213,165 +166,138 @@ int SendPending(int type,double price,double lots,string reason)
    if(ticket<0)
    {
       Log("SEND ERROR | side="+side+
-          " error="+IntegerToString(error)+
-          " price="+DoubleToString(price,Digits)+
-          " lots="+DoubleToString(lots,DigitsLot));
-      return -1;
+          " error="+IntegerToString(error));
+      return(false);
    }
 
    Log("SEND SUCCESS | side="+side+
        " ticket="+IntegerToString(ticket)+
        " price="+DoubleToString(price,Digits)+
-       " lots="+DoubleToString(lots,DigitsLot)+
-       " reason="+reason);
-
-   return ticket;
-}
-
-void LogState(string event_name,SideState &b,SideState &s)
-{
-   Log(event_name+
-       " | BUY market="+IntegerToString(b.market_count)+
-       " pending="+IntegerToString(b.pending_count)+
-       " lots="+DoubleToString(b.market_lots,DigitsLot)+
-       " | SELL market="+IntegerToString(s.market_count)+
-       " pending="+IntegerToString(s.pending_count)+
-       " lots="+DoubleToString(s.market_lots,DigitsLot));
-}
-
-void Reconcile()
-{
-   SideState buy,sell;
-   GetSideState(OP_BUY,buy);
-   GetSideState(OP_SELL,sell);
-
-   if(g_last_buy_count<0 || buy.market_count!=g_last_buy_count)
-   {
-      LogState("RECONCILE BUY COUNT CHANGE",buy,sell);
-      g_last_buy_count=buy.market_count;
-   }
-
-   if(g_last_sell_count<0 || sell.market_count!=g_last_sell_count)
-   {
-      LogState("RECONCILE SELL COUNT CHANGE",buy,sell);
-      g_last_sell_count=sell.market_count;
-   }
+       " lots="+DoubleToString(lots,2));
+   return(true);
 }
 
 void EnsureInitialOrders()
 {
-   if(!ContextOK()) return;
+   if(!SendInitialOrders) return;
 
-   SideState buy,sell;
-   GetSideState(OP_BUY,buy);
-   GetSideState(OP_SELL,sell);
-
-   if(buy.market_count==0 && buy.pending_count==0)
+   // Preserve V0.1 behavior: initial orders exist only when the
+   // corresponding side has no market/pending order.
+   if(!IsOurPending(OP_BUYSTOP))
    {
-      RefreshRates();
-      double price=NormalizeDouble(Ask+FirstStep*Point,Digits);
-      SendPending(OP_BUYSTOP,price,ZeusLot(0),"INITIAL_FIRSTSTEP");
+      bool buy_market=false;
+      for(int i=OrdersTotal()-1;i>=0;i--)
+      {
+         if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
+         if(!IsOurOrder()) continue;
+         if(OrderType()==OP_BUY || OrderType()==OP_BUYLIMIT)
+         {
+            buy_market=true;
+            break;
+         }
+      }
+      if(!buy_market) SendInitial(OP_BUYSTOP);
    }
 
-   if(sell.market_count==0 && sell.pending_count==0)
+   if(!IsOurPending(OP_SELLSTOP))
    {
-      RefreshRates();
-      double price=NormalizeDouble(Bid-FirstStep*Point,Digits);
-      SendPending(OP_SELLSTOP,price,ZeusLot(0),"INITIAL_FIRSTSTEP");
+      bool sell_market=false;
+      for(int j=OrdersTotal()-1;j>=0;j--)
+      {
+         if(!OrderSelect(j,SELECT_BY_POS,MODE_TRADES)) continue;
+         if(!IsOurOrder()) continue;
+         if(OrderType()==OP_SELL || OrderType()==OP_SELLLIMIT)
+         {
+            sell_market=true;
+            break;
+         }
+      }
+      if(!sell_market) SendInitial(OP_SELLSTOP);
    }
 }
 
-double BuyCandidate(int count,SideState &s)
+void Reconcile()
 {
-   RefreshRates();
-   double candidate=(count==0 ? Ask+FirstStep*Point : Ask+MinDistance*Point);
+   int buy_market=0;
+   int sell_market=0;
+   int buy_pending=0;
+   int sell_pending=0;
+   double buy_market_lots=0.0;
+   double sell_market_lots=0.0;
+   double buy_pending_lots=0.0;
+   double sell_pending_lots=0.0;
 
-   // Empirically observed Step fallback.
-   if(count>0 && s.lowest>0.0 && candidate<s.lowest-Step*Point)
-      candidate=Ask+Step*Point;
+   for(int i=OrdersTotal()-1;i>=0;i--)
+   {
+      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
+      if(!IsOurOrder()) continue;
 
-   return NormalizeDouble(candidate,Digits);
-}
+      int type=OrderType();
+      double order_lots=OrderLots();
 
-double SellCandidate(int count,SideState &s)
-{
-   RefreshRates();
-   double candidate=(count==0 ? Bid-FirstStep*Point : Bid-MinDistance*Point);
+      if(type==OP_BUY)
+      {
+         buy_market++;
+         buy_market_lots+=order_lots;
+      }
+      else if(type==OP_SELL)
+      {
+         sell_market++;
+         sell_market_lots+=order_lots;
+      }
+      else if(type==OP_BUYSTOP || type==OP_BUYLIMIT)
+      {
+         buy_pending++;
+         buy_pending_lots+=order_lots;
+      }
+      else if(type==OP_SELLSTOP || type==OP_SELLLIMIT)
+      {
+         sell_pending++;
+         sell_pending_lots+=order_lots;
+      }
+   }
 
-   // Empirically observed Step fallback.
-   if(count>0 && s.highest>0.0 && candidate<s.highest+Step*Point)
-      candidate=Bid-Step*Point;
+   bool buy_changed=(g_prev_buy_market>=0 && buy_market!=g_prev_buy_market);
+   bool sell_changed=(g_prev_sell_market>=0 && sell_market!=g_prev_sell_market);
 
-   return NormalizeDouble(candidate,Digits);
-}
+   if(g_prev_buy_market<0 || g_prev_sell_market<0 || buy_changed || sell_changed)
+   {
+      Log("RECONCILE | BUY market="+IntegerToString(buy_market)+
+          " pending="+IntegerToString(buy_pending)+
+          " market_lots="+DoubleToString(buy_market_lots,2)+
+          " pending_lots="+DoubleToString(buy_pending_lots,2)+
+          " | SELL market="+IntegerToString(sell_market)+
+          " pending="+IntegerToString(sell_pending)+
+          " market_lots="+DoubleToString(sell_market_lots,2)+
+          " pending_lots="+DoubleToString(sell_pending_lots,2));
+   }
 
-void EvaluateBuy()
-{
-   if(!EnableLadderEntries || !ContextOK()) return;
+   if(buy_changed)
+      Log("ACTIVATION EVIDENCE | BUY market_count " +
+          IntegerToString(g_prev_buy_market)+" -> "+IntegerToString(buy_market));
 
-   SideState s;
-   GetSideState(OP_BUY,s);
+   if(sell_changed)
+      Log("ACTIVATION EVIDENCE | SELL market_count " +
+          IntegerToString(g_prev_sell_market)+" -> "+IntegerToString(sell_market));
 
-   // No market BUY means the initial BUY STOP is the only entry intent.
-   if(s.market_count<=0) return;
-
-   // One BUY STOP is enough until it is activated/reconciled.
-   if(HasPending(OP_BUYSTOP)) return;
-
-   int n=s.market_count;
-   double price=BuyCandidate(n,s);
-   double lots=ZeusLot(n);
-
-   SendPending(OP_BUYSTOP,price,lots,"LADDER_BUY");
-}
-
-void EvaluateSell()
-{
-   if(!EnableLadderEntries || !ContextOK()) return;
-
-   SideState s;
-   GetSideState(OP_SELL,s);
-
-   if(s.market_count<=0) return;
-   if(HasPending(OP_SELLSTOP)) return;
-
-   int n=s.market_count;
-   double price=SellCandidate(n,s);
-   double lots=ZeusLot(n);
-
-   SendPending(OP_SELLSTOP,price,lots,"LADDER_SELL");
-}
-
-void Cycle()
-{
-   RefreshRates();
-
-   Reconcile();
-
-   // EXIT is intentionally absent in V0.2.
-   // BUY and SELL engines remain independent.
-   EnsureInitialOrders();
-   EvaluateBuy();
-   EvaluateSell();
+   g_prev_buy_market=buy_market;
+   g_prev_sell_market=sell_market;
 }
 
 int OnInit()
 {
    Log("============================================================");
-   Log("INIT | ZEUS_REPLICA V0.2");
+   Log("INIT | ZEUS_REPLICA V0.2 | STAGE 2 RECONCILIATION");
    Log("INIT | Symbol="+Symbol()+" Magic="+IntegerToString(Magic));
    Log("INIT | testing="+(IsTesting()?"true":"false")+
        " digits="+IntegerToString(Digits)+
        " point="+DoubleToString(Point,Digits));
    Log("INIT | FirstStep="+IntegerToString(FirstStep)+
-       " MinDistance="+IntegerToString(MinDistance)+
-       " Step="+IntegerToString(Step));
-   Log("INIT | stop_level="+DoubleToString(MarketInfo(Symbol(),MODE_STOPLEVEL),0)+
-       " min_lot="+DoubleToString(MarketInfo(Symbol(),MODE_MINLOT),2)+
-       " lot_step="+DoubleToString(MarketInfo(Symbol(),MODE_LOTSTEP),2));
+       " Lots="+DoubleToString(Lots,2)+
+       " MaxSpread="+IntegerToString(MaxSpread));
+   Log("INIT | NO LADDER | NO TRAILING | NO EXITS");
    Log("INIT | returning INIT_SUCCEEDED");
    Log("============================================================");
-
    return(INIT_SUCCEEDED);
 }
 
@@ -392,7 +318,12 @@ void OnTick()
           " ask="+DoubleToString(Ask,Digits));
    }
 
-   Cycle();
+   // Stage 2 order of operations:
+   // 1) reconcile current state
+   // 2) preserve the proven initial-order behavior
+   // No ladder or other order creation is allowed here.
+   Reconcile();
+   EnsureInitialOrders();
 }
 
 //+------------------------------------------------------------------+
