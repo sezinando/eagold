@@ -2,36 +2,38 @@
 //| ZEUS_REPLICA.mq4                                                 |
 //| ZEUS Gold Hedge V1.2 - incremental reverse engineering           |
 //|                                                                  |
-//| V0.2.1 - STAGE 2: RECONCILIATION ONLY                           |
+//| V0.3 - STAGE 3: FIRST BUY LADDER ONLY                           |
 //|                                                                  |
-//| IMPORTANT                                                        |
-//|   The V0.1 initial-order path was already proven in Strategy     |
-//|   Tester. Stage 2 must not alter that execution path.            |
+//| APPROVED BASE                                                    |
+//|   V0.1/V0.2.1: initial BUY STOP + SELL STOP proven              |
+//|   V0.2.1: reconciliation proven                                  |
 //|                                                                  |
 //| THIS STAGE                                                       |
-//|   - preserve the exact V0.1 bootstrap behavior                   |
-//|   - inspect current orders after the bootstrap                   |
-//|   - classify BUY/SELL market and pending orders                  |
-//|   - report count and lots                                        |
-//|   - detect market-count transitions (activation evidence)        |
+//|   - preserve proven bootstrap path                               |
+//|   - detect BUY activation                                       |
+//|   - when exactly one BUY market position exists and no BUY STOP  |
+//|     exists, create the first BUY ladder order                    |
+//|   - price = Ask + MinDistance                                    |
+//|   - lot remains the fixed Lots input in this isolated stage      |
 //|                                                                  |
 //| INTENTIONALLY NOT IMPLEMENTED                                    |
-//|   - ladder                                                        |
-//|   - trailing                                                      |
-//|   - exits                                                         |
-//|   - CloseBy                                                       |
-//|   - Step / MinDistance candidate creation                        |
+//|   - SELL ladder                                                  |
+//|   - lot progression / K_Lot / PlusLot                            |
+//|   - Step fallback                                                |
+//|   - trailing                                                     |
+//|   - exits / CloseBy / CloseAll                                   |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "0.2.1"
-#property description "ZEUS Replica V0.2.1 - Stage 2 reconciliation only"
+#property version   "0.3"
+#property description "ZEUS Replica V0.3 - Stage 3 first BUY ladder only"
 
-input int      Magic       = 1001;
-input double   Lots        = 0.01;
-input int      FirstStep   = 160;
-input int      MaxSpread   = 100;
+input int      Magic             = 1001;
+input double   Lots              = 0.01;
+input int      FirstStep         = 160;
+input int      MinDistance       = 340;
+input int      MaxSpread         = 100;
 input bool     SendInitialOrders = true;
-input bool     EnableLogs = true;
+input bool     EnableLogs        = true;
 
 bool g_first_tick=false;
 int  g_prev_buy_market=-1;
@@ -120,9 +122,8 @@ double NormalizeLots(double value)
    return(NormalizeDouble(value,2));
 }
 
-// IMPORTANT: this function intentionally mirrors the V0.1 proven
-// initial-order execution path. Stage 2 must not introduce new
-// trade-permission gates between the first tick and OrderSend.
+// Proven initial-order execution path. No new trade-permission gate is
+// inserted between the first tick and OrderSend.
 bool SendInitial(int type)
 {
    RefreshRates();
@@ -197,8 +198,6 @@ bool SendInitial(int type)
    return(true);
 }
 
-// Exact V0.1 bootstrap behavior: check the pending order and send the
-// corresponding initial order. No additional market-order gate here.
 void BootOrders()
 {
    if(!SendInitialOrders)
@@ -286,13 +285,97 @@ void Reconcile()
    g_prev_sell_market=sell_market;
 }
 
+// Stage 3 isolated BUY ladder.
+// Hypothesis: after the initial BUY STOP activates, when exactly one
+// BUY market position exists and no BUY STOP remains, create one BUY
+// STOP at Ask + MinDistance. The lot is intentionally fixed at Lots.
+bool SendFirstBuyLadder()
+{
+   RefreshRates();
+
+   double spread_points=(Ask-Bid)/Point;
+   if(spread_points>MaxSpread)
+   {
+      Log("BUY LADDER | REJECT | spread="+DoubleToString(spread_points,1)+
+          " > MaxSpread="+IntegerToString(MaxSpread));
+      return(false);
+   }
+
+   double lots=NormalizeLots(Lots);
+   double price=NormalizeDouble(Ask+MinDistance*Point,Digits);
+   double stop_level=MarketInfo(Symbol(),MODE_STOPLEVEL)*Point;
+
+   if(price<=Ask+stop_level)
+   {
+      Log("BUY LADDER | REJECT | broker distance | price="+
+          DoubleToString(price,Digits)+" ask="+DoubleToString(Ask,Digits)+
+          " stop_level="+DoubleToString(stop_level,Digits));
+      return(false);
+   }
+
+   Log("BUY LADDER | ATTEMPT | n=1 price="+
+       DoubleToString(price,Digits)+
+       " lots="+DoubleToString(lots,2)+
+       " MinDistance="+IntegerToString(MinDistance));
+
+   ResetLastError();
+   int ticket=OrderSend(Symbol(),OP_BUYSTOP,lots,price,0,0,0,
+                        "ZEUS_REPLICA_BUY_L1",Magic,0,clrNONE);
+   int error=GetLastError();
+
+   if(ticket<0)
+   {
+      Log("BUY LADDER | ERROR | error="+IntegerToString(error)+
+          " price="+DoubleToString(price,Digits)+
+          " lots="+DoubleToString(lots,2));
+      return(false);
+   }
+
+   Log("BUY LADDER | SUCCESS | ticket="+IntegerToString(ticket)+
+       " price="+DoubleToString(price,Digits)+
+       " lots="+DoubleToString(lots,2));
+   return(true);
+}
+
+void ProcessBuyLadder()
+{
+   int buy_market=0;
+   int buy_pending=0;
+
+   for(int i=OrdersTotal()-1; i>=0; i--)
+   {
+      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))
+         continue;
+
+      if(!IsOurOrder())
+         continue;
+
+      int type=OrderType();
+      if(type==OP_BUY)
+         buy_market++;
+      else if(type==OP_BUYSTOP)
+         buy_pending++;
+   }
+
+   // Exactly one market BUY and no BUY STOP is the only Stage 3 trigger.
+   if(buy_market==1 && buy_pending==0)
+   {
+      Log("BUY LADDER | TRIGGER | market_count=1 pending_count=0");
+      SendFirstBuyLadder();
+   }
+}
+
 int OnInit()
 {
    Log("============================================================");
-   Log("INIT | ZEUS_REPLICA V0.2.1 | STAGE 2 RECONCILIATION");
+   Log("INIT | ZEUS_REPLICA V0.3 | STAGE 3 FIRST BUY LADDER");
    Log("INIT | Symbol="+Symbol()+" Magic="+IntegerToString(Magic));
    PrintEnvironment();
-   Log("INIT | NO LADDER | NO TRAILING | NO EXITS");
+   Log("INIT | FirstStep="+IntegerToString(FirstStep)+
+       " MinDistance="+IntegerToString(MinDistance)+
+       " Lots="+DoubleToString(Lots,2)+
+       " MaxSpread="+IntegerToString(MaxSpread));
+   Log("INIT | BUY LADDER ONLY | NO SELL LADDER | NO TRAILING | NO EXITS");
    Log("INIT | returning INIT_SUCCEEDED");
    Log("============================================================");
 
@@ -320,13 +403,16 @@ void OnTick()
       Log("TICK | OnTick lifecycle confirmed");
       Log("============================================================");
 
-      // CRITICAL: keep the exact proven V0.1 first-tick path.
+      // Preserve the exact proven bootstrap path.
       BootOrders();
       return;
    }
 
-   // Stage 2 starts only after the proven bootstrap has executed.
+   // Stage 2 reconciliation remains intact.
    Reconcile();
+
+   // Stage 3: only the first BUY ladder order.
+   ProcessBuyLadder();
 }
 
 //+------------------------------------------------------------------+
