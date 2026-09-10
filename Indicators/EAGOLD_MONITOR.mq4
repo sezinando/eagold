@@ -1,6 +1,6 @@
 #property strict
 #property indicator_chart_window
-#property version   "1.001"
+#property version   "1.002"
 #property description "EAGOLD - Basket / Profit / Exposure Monitor"
 
 input int    MagicNumber       = 1001;
@@ -11,6 +11,7 @@ input int    PanelY            = 20;
 input int    FontSize          = 10;
 input string PanelFont         = "Consolas";
 input bool   PersistExtremes   = true;
+input bool   ShowGM3Clock      = true;
 
 string PREFIX = "EAGOLD_MON_";
 double g_minTotalProfit = 0.0;
@@ -155,6 +156,14 @@ string Lots(double value)
    return(DoubleToString(value,2));
 }
 
+string GM3Time()
+{
+   // Convert UTC to fixed UTC-3, independent of broker/server time.
+   datetime utc=TimeGMT();
+   datetime gm3=utc-3*60*60;
+   return(TimeToString(gm3,TIME_DATE|TIME_SECONDS));
+}
+
 void UpdatePanel()
 {
    int buyCount,sellCount,buyPending,sellPending,totalPending;
@@ -165,6 +174,8 @@ void UpdatePanel()
 
    int row=0;
    SetLabel(PREFIX+"TITLE","EAGOLD MONITOR   XAUUSD",row++);
+   if(ShowGM3Clock)
+      SetLabel(PREFIX+"GM3",StringFormat("GM-3            %s",GM3Time()),row++);
    SetLabel(PREFIX+"SEP1","----------------------------------------",row++);
    SetLabel(PREFIX+"BUY",StringFormat("BUY   %3d pos  %6s lot  P/L %10s",buyCount,Lots(buyLots),Money(buyProfit)),row++);
    SetLabel(PREFIX+"SELL",StringFormat("SELL  %3d pos  %6s lot  P/L %10s",sellCount,Lots(sellLots),Money(sellProfit)),row++);
